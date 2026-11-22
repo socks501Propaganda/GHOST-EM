@@ -2,6 +2,9 @@
 """Consent-based geolocation teaching demo; local Django server + optional ngrok."""
 import argparse
 import os
+import hashlib
+import hmac
+import time
 import secrets
 import signal
 import sys
@@ -52,6 +55,8 @@ DATABASES={
         ssl_require=bool(os.environ.get("DATABASE_URL")),
     )
 },
+
+
 USE_TZ=True,
 SESSION_COOKIE_SECURE=True,
 SESSION_COOKIE_HTTPONLY=True,
@@ -88,10 +93,45 @@ document.getElementById('share').onclick=()=>{
 def index(request):
     return HttpResponse(HTML)
 
+def check_rate_limit(request):
+    from django.db import connection
+
+    client_ip = request.META.get("REMOTE_ADDR", "")
+    client_key = hmac.new(
+        os.environ["SECRET_KEY"].encode(),
+        client_ip.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    window_start = int(time.time()) // 60
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO public.request_rate_limits
+                (client_key, window_start, request_count)
+            VALUES (%s, %s, 1)
+            ON CONFLICT (client_key, window_start)
+            DO UPDATE SET
+                request_count = request_rate_limits.request_count + 1
+            RETURNING request_count
+            """,
+            [client_key, window_start],
+        )
+        count = cursor.fetchone()[0]
+
+    return count <= 5
+
 @csrf_protect
 def submit(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'POST required'}, status=405)
+
+    if not check_rate_limit(request):
+        return JsonResponse(
+            {"error": "Too many requests. Please wait a minute."},
+            status=429,
+        )
 
     import json
     try:
@@ -104,6 +144,7 @@ def submit(request):
 
     except (ValueError, TypeError, KeyError, json.JSONDecodeError):
         return JsonResponse({'error': 'Invalid coordinates'}, status=400)
+
 
     from django.db import connection
 
@@ -225,7 +266,7 @@ def main():
         print('GHOST-EM')
     print('Made by GHO$T. GEOLOCATE PHONES VIA URL.')
     from wsgiref.simple_server import make_server, WSGIRequestHandler
-    
+
     class QuietHandler(WSGIRequestHandler):
         def log_message(self,format,*args):
             pass
