@@ -3,3 +3,5 @@ pyngrok>=7.2,<8
 pyfiglet>=1.0,<2
 gunicorn
 whitenoise
+psycopg[binary]>=3.2,<4
+dj-database-url>=2.2,<4

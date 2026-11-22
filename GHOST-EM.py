@@ -19,6 +19,7 @@ from django.views.decorators.csrf import csrf_protect
 ##imported from GHOST IN THE SSH
 
 from django.views.decorators.csrf import ensure_csrf_cookie
+import dj_database_url
 
 if not settings.configured:
     render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
@@ -33,15 +34,35 @@ if not settings.configured:
         ROOT_URLCONF=__name__,
         ALLOWED_HOSTS=allowed_hosts,
         MIDDLEWARE=[
-            "django.middleware.security.SecurityMiddleware",
-            "django.middleware.csrf.CsrfViewMiddleware",
-        ],
-        INSTALLED_APPS=[],
-        USE_TZ=True,
-        SECURE_PROXY_SSL_HEADER=(
-            "HTTP_X_FORWARDED_PROTO",
-            "https"
-        ),
+    "django.middleware.security.SecurityMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+],
+        INSTALLED_APPS=[
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+],
+DATABASES={
+    "default": dj_database_url.config(
+        default="sqlite:///db.sqlite3",
+        conn_max_age=0,
+        conn_health_checks=True,
+        ssl_require=bool(os.environ.get("DATABASE_URL")),
+    )
+},
+USE_TZ=True,
+SESSION_COOKIE_SECURE=True,
+SESSION_COOKIE_HTTPONLY=True,
+SESSION_COOKIE_SAMESITE="Lax",
+CSRF_COOKIE_SECURE=True,
+CSRF_COOKIE_SAMESITE="Lax",
+SESSION_COOKIE_AGE=3600,
+SECURE_PROXY_SSL_HEADER=(
+    "HTTP_X_FORWARDED_PROTO",
+    "https"
+),
     )
 ######
 
@@ -70,19 +91,121 @@ def index(request):
 @csrf_protect
 def submit(request):
     if request.method != 'POST':
-        return JsonResponse({'error':'POST required'}, status=405)
+        return JsonResponse({'error': 'POST required'}, status=405)
+
     import json
     try:
-        payload=json.loads(request.body)
-        lat=float(payload['latitude']); lon=float(payload['longitude'])
+        payload = json.loads(request.body)
+        lat = float(payload['latitude'])
+        lon = float(payload['longitude'])
+
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             raise ValueError('Invalid coordinates')
-    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
-        return JsonResponse({'error':'Invalid coordinates'},status=400)
-    EVENTS.put((lat,lon))
-    return JsonResponse({'ok':True})
 
-urlpatterns=[path('',index),path('submit',submit)]
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return JsonResponse({'error': 'Invalid coordinates'}, status=400)
+
+    from django.db import connection
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO public.authorized_locations (latitude, longitude)
+            VALUES (%s, %s)
+            """,
+            [lat, lon],
+        )
+
+    return JsonResponse({'ok': True})
+
+from django.contrib.auth import authenticate, login
+from django.shortcuts import redirect
+from django.views.decorators.http import require_http_methods
+from django.utils.html import escape
+
+@require_http_methods(["GET", "POST"])
+@csrf_protect
+@ensure_csrf_cookie
+def dashboard_login(request):
+    if request.user.is_authenticated and request.user.is_superuser:
+        return redirect("/dashboard/")
+
+    error = ""
+
+    if request.method == "POST":
+        username = request.POST.get("username", "")
+        password = request.POST.get("password", "")
+        user = authenticate(request, username=username, password=password)
+
+        if user is not None and user.is_active and user.is_superuser:
+            login(request, user)
+            return redirect("/dashboard/")
+
+        error = "<p>Invalid credentials.</p>"
+
+    return HttpResponse(f"""
+    <!doctype html>
+    <html lang="en">
+    <head><meta charset="utf-8"><title>GHOST-EM Login</title></head>
+    <body>
+      <h1>GHOST-EM Administrator Login</h1>
+      {error}
+      <form method="post">
+        <input type="hidden" name="csrfmiddlewaretoken"
+               value="{escape(get_token(request))}">
+        <label>Username <input name="username" required></label>
+        <label>Password <input type="password" name="password" required></label>
+        <button type="submit">Sign in</button>
+      </form>
+    </body>
+    </html>
+    """)
+##
+
+from django.contrib.auth.decorators import user_passes_test
+
+from django.contrib.auth.decorators import user_passes_test
+from django.db import connection
+from django.utils.html import escape
+
+@user_passes_test(
+    lambda user: user.is_authenticated and user.is_superuser,
+    login_url="/dashboard/login/"
+)
+def dashboard(request):
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM public.authorized_locations
+            WHERE expires_at > NOW()
+        """)
+        count = cursor.fetchone()[0]
+
+    return HttpResponse(f"""
+    <!doctype html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>GHOST-EM Dashboard</title>
+    </head>
+    <body>
+        <h1>GHOST-EM Dashboard</h1>
+        <p>Administrator authentication successful.</p>
+        <h2>Authorized submissions</h2>
+        <p>Active records: {count}</p>
+        <p>Retention period: 7 days</p>
+        <p>Individual location records are not displayed yet.</p>
+    </body>
+    </html>
+    """)
+##
+
+urlpatterns = [
+    path("", index),
+    path("submit", submit),
+    path("dashboard/login/", dashboard_login),
+    path("dashboard/", dashboard),
+]
 
 from django.core.wsgi import get_wsgi_application
 
