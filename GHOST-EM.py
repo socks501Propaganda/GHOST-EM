@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Consent-based geolocation teaching demo; local Django server + optional ngrok."""
+import ipaddress
 import argparse
 import os
 import hashlib
@@ -96,7 +97,13 @@ def index(request):
 def check_rate_limit(request):
     from django.db import connection
 
-    client_ip = request.META.get("REMOTE_ADDR", "")
+    raw_ip = request.META.get("HTTP_CF_CONNECTING_IP", "")
+
+    try:
+        client_ip = str(ipaddress.ip_address(raw_ip))
+    except ValueError:
+        return False
+
     client_key = hmac.new(
         os.environ["SECRET_KEY"].encode(),
         client_ip.encode(),
