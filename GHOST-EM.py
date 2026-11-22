@@ -195,18 +195,6 @@ def dashboard_login(request):
     <!doctype html>
     <html lang="en">
     <head><meta charset="utf-8"><title>GHOST-EM Login</title>
-    <link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<style>
-    #map {
-        height: 450px;
-        width: 100%;
-        border-radius: 10px;
-    }
-</style>
     </head>
     <body>
       <h1>GHOST-EM Administrator Login</h1>
