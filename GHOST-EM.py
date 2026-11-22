@@ -194,7 +194,20 @@ def dashboard_login(request):
     return HttpResponse(f"""
     <!doctype html>
     <html lang="en">
-    <head><meta charset="utf-8"><title>GHOST-EM Login</title></head>
+    <head><meta charset="utf-8"><title>GHOST-EM Login</title>
+    <link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+    #map {
+        height: 450px;
+        width: 100%;
+        border-radius: 10px;
+    }
+</style>
+    </head>
     <body>
       <h1>GHOST-EM Administrator Login</h1>
       {error}
@@ -228,13 +241,36 @@ def dashboard(request):
             WHERE expires_at > NOW()
         """)
         count = cursor.fetchone()[0]
+        cursor.execute("""
+            SELECT latitude, longitude
+            FROM public.authorized_locations
+            WHERE expires_at > NOW()
+            ORDER BY submitted_at DESC
+            LIMIT 100
+        """)
+        locations = cursor.fetchall()
+    import json
 
+    map_data = json.dumps([
+        {"lat": lat, "lng": lon}
+        for lat, lon in locations
+    ])
     return HttpResponse(f"""
     <!doctype html>
     <html lang="en">
     <head>
         <meta charset="utf-8">
         <title>GHOST-EM Dashboard</title>
+        <link rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+    #map {{
+        height: 450px;
+        width: 100%;
+        border-radius: 10px;
+    }}
+</style>
     </head>
     <body>
         <h1>GHOST-EM Dashboard</h1>
@@ -242,7 +278,33 @@ def dashboard(request):
         <h2>Authorized submissions</h2>
         <p>Active records: {count}</p>
         <p>Retention period: 7 days</p>
-        <p>Individual location records are not displayed yet.</p>
+        <h2>GPS Location Map</h2>
+<div id="map"></div>
+<script>
+    const locations = {map_data};
+
+    const map = L.map('map').setView([20, 0], 2);
+
+    L.tileLayer(
+        'https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
+        {{
+            attribution: '&copy; OpenStreetMap contributors',
+            maxZoom: 19
+        }}
+    ).addTo(map);
+
+    const markers = [];
+
+    locations.forEach(loc => {{
+        const marker = L.marker([loc.lat, loc.lng]).addTo(map);
+        markers.push(marker);
+    }});
+
+    if (markers.length > 0) {{
+        const group = L.featureGroup(markers);
+        map.fitBounds(group.getBounds(), {{padding: [30, 30], maxZoom: 15}});
+    }}
+</script>
     </body>
     </html>
     """)
