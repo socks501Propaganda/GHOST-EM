@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WE$-GH0$T
+    </title>
+    <style>
+     body {
+  font: 16px system-ui;
+  min-height: 100vh;
+  margin: 0;
+  padding: 2rem;
+  box-sizing: border-box;
+  line-height: 1.6;
+  color: #f3e8ff;
+  background: radial-gradient(
+    circle at top,
+    #301050 0%,
+    #100820 45%,
+    #05030d 100%
+  );
+}
+      button {
+  display: block;
+  margin: 2rem auto;
+  padding: 1rem 2rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: white;
+  background: linear-gradient(135deg, #9333ea, #6d28d9);
+  border: 1px solid #c084fc;
+  border-radius: 12px;
+  cursor: pointer;
+  box-shadow: 0 0 15px #7e22ce;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 30px #a855f7;
+}
+      #status {
+  white-space: pre-wrap;
+  text-align: center;
+  padding: 1.25rem;
+  margin: 1.5rem auto;
+  max-width: 480px;
+  min-height: 24px;
+  color: #d8b4fe;
+  background: rgba(147, 51, 234, 0.08);
+  border: 1px solid rgba(192, 132, 252, 0.3);
+  border-radius: 12px;
+  box-shadow: 0 0 20px rgba(147, 51, 234, 0.1);
+  backdrop-filter: blur(10px);
+}
+      .ghost-title {
+  text-align: center;
+  font-size: clamp(2rem, 6vw, 4rem);
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: #c084fc;
+  text-shadow: 0 0 15px #9333ea, 0 0 35px #7e22ce;
+  margin-bottom: 0;
+}
+
+.subtitle {
+  text-align: center;
+  font-size: 0.8rem;
+  letter-spacing: 3px;
+  color: #a78bfa;
+  margin-top: 0.5rem;
+}
+.consent-notice {
+  max-width: 480px;
+  margin: 2rem auto;
+  padding: 1.5rem;
+  background: rgba(20, 10, 40, 0.75);
+  border: 1px solid rgba(192, 132, 252, 0.35);
+  border-radius: 16px;
+  text-align: center;
+  box-shadow: 0 0 25px rgba(147, 51, 234, 0.12);
+}
+
+.consent-notice strong {
+  display: block;
+  margin-bottom: 0.75rem;
+  color: #c084fc;
+  letter-spacing: 2px;
+}
+
+.consent-notice span {
+  display: block;
+  color: #ddd6fe;
+  line-height: 1.7;
+}
+body {
+  background-image:
+    linear-gradient(rgba(168, 85, 247, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(168, 85, 247, 0.035) 1px, transparent 1px),
+    radial-gradient(circle at top, #301050 0%, #100820 45%, #05030d 100%);
+  background-size: 40px 40px, 40px 40px, cover;
+}
+.subtitle::after {
+  content: "";
+  display: block;
+  width: 180px;
+  height: 2px;
+  margin: 1.5rem auto;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    #a855f7,
+    transparent
+  );
+  box-shadow: 0 0 15px #9333ea;
+}
+.ghost-footer {
+  margin-top: 4rem;
+  padding: 1.5rem;
+  text-align: center;
+  font-size: 0.75rem;
+  letter-spacing: 2px;
+  color: #a78bfa;
+  border-top: 1px solid rgba(192, 132, 252, 0.2);
+}
+
+.ghost-footer span {
+  display: block;
+  margin-top: 0.5rem;
+  color: #7c6a99;
+}
+    </style>
+  </head>
+  <body>
+    <h1 class="ghost-title">WE$-GH0$T</h1>
+    <h5 class="subtitle">Geospatial RF Intelligence and Electromagnetic Spectrum Analysis Platform</h5>
+<p class="subtitle">Mapping the Invisible Spectrum</p>
+    <p class="consent-notice">
+  <strong>OPSEC is EVERYTHING.</strong>
+  <span>
+    GHO$T-EM is an emerging, web-based radio-frequency intelligence and geospatial spectrum analysis platform designed to identify, map, monitor, and analyze wireless signals across real-world geographic enviornments.
+  </span>
+</p>
+    <button id="share">Consent to share your location</button>
+    <p id="status" role="status"></p>
+    <script>
+      const status = document.getElementById("status");
+      document.getElementById("share").onclick = () => {
+        if (!navigator.geolocation) {
+          status.textContent = "Geolocation is not supported.";
+          return;
+        }
+        status.textContent = "Waiting for browser permission…";
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            try {
+              const resp = await fetch("/submit", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-CSRFToken":
+                    document.cookie.match(/(?:^|; )csrftoken=([^;]+)/)?.[1] ||
+                    "",
+                },
+                body: JSON.stringify({
+                  latitude: pos.coords.latitude,
+                  longitude: pos.coords.longitude,
+                }),
+              });
+              if (!resp.ok) throw Error("Server returned " + resp.status);
+              const latitude = pos.coords.latitude;
+const longitude = pos.coords.longitude;
+
+sessionStorage.setItem(
+  "ghostem_location",
+  JSON.stringify({ latitude, longitude })
+);
+
+window.location.href = "/rf-map/";
+              status.textContent =
+                "Location set, We$-Gho$t will be informed. Latitude: " +
+                pos.coords.latitude +
+                "; Longitude: " +
+                pos.coords.longitude;
+            } catch (e) {
+              status.textContent = "Unable to share location: " + e.message;
+            }
+          },
+          (err) => (status.textContent = "Location not shared: " + err.message),
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+        );
+      };
+    </script>
+    <footer class="ghost-footer">
+  PROJECT WE$-GH0$T • WE DO NOT FORGIVE
+  <span>AUTHORIZED USERS ONLY</span>
+</footer>
+  </body>
+</html>

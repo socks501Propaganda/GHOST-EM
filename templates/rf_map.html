@@ -1,0 +1,707 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>GHOST-EM | Odessa RF Spectrum Mapper</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07040f;
+        --panel: #120b20;
+        --edge: #51316c;
+        --violet: #b778ff;
+        --muted: #b7a7ce;
+        --text: #f2eaff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: radial-gradient(
+          ellipse at 12% 8%,
+          #2b1047 0%,
+          #10071e 44%,
+          #05030d 100%
+        );
+        color: var(--text);
+        font:
+          14px system-ui,
+          -apple-system,
+          Segoe UI,
+          sans-serif;
+      }
+      .app {
+        display: grid;
+        grid-template-columns: 348px minmax(0, 1fr);
+        height: 100dvh;
+      }
+      aside {
+        padding: 23px;
+        overflow: auto;
+        background: linear-gradient(165deg, #180c2bef, #090513f5);
+        border-right: 1px solid #613887;
+        box-shadow: 10px 0 35px #0005;
+        z-index: 1000;
+      }
+      h1 {
+        font-size: 23px;
+        letter-spacing: 2px;
+        margin: 0 0 7px;
+        color: #f7ecff;
+        text-shadow: 0 0 18px #9333ea8c;
+      }
+      h2 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        margin: 25px 0 10px;
+        color: #c994ff;
+        border-bottom: 1px solid #42285a;
+        padding-bottom: 8px;
+      }
+      .sub {
+        color: #b9a6d1;
+        font-size: 12px;
+        line-height: 1.6;
+        letter-spacing: 0.3px;
+      }
+      .eyebrow {
+        font:
+          10px ui-monospace,
+          monospace;
+        color: #c184ff;
+        letter-spacing: 3px;
+        margin-bottom: 8px;
+      }
+      .chip {
+        display: inline-block;
+        border: 1px solid #7943a4;
+        background: #2a1242;
+        border-radius: 99px;
+        padding: 4px 9px;
+        color: #d5aaff;
+        font:
+          10px ui-monospace,
+          monospace;
+        margin-top: 12px;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        background: linear-gradient(135deg, #6c22aa, #9333ea);
+        color: #fff;
+        border: 1px solid #a75be4;
+        border-radius: 9px;
+        padding: 11px 13px;
+        cursor: pointer;
+        margin: 4px 4px 4px 0;
+        box-shadow: 0 0 15px #9333ea32;
+        font-weight: 650;
+      }
+      button:hover {
+        filter: brightness(1.2);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: wait;
+      }
+      button.secondary {
+        background: #21142f;
+        border-color: #4e3269;
+        box-shadow: none;
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: #ba78ff;
+      }
+      input[type="file"] {
+        max-width: 100%;
+        font-size: 12px;
+      }
+      input[type="checkbox"] {
+        accent-color: #a855f7;
+      }
+      label {
+        display: block;
+        margin: 12px 0 5px;
+      }
+      .metric {
+        display: inline-block;
+        padding: 12px 14px;
+        background: #201132;
+        border: 1px solid #45275e;
+        border-radius: 10px;
+        margin: 8px 5px 4px 0;
+        color: #cbbbdc;
+        font-size: 11px;
+      }
+      .metric b {
+        display: block;
+        font-size: 24px;
+        color: #e1bbff;
+      }
+      .small {
+        font-size: 12px;
+        color: #b5a6c9;
+        line-height: 1.6;
+      }
+      .note {
+        background: #22142f;
+        border-left: 3px solid #c084fc;
+        padding: 12px;
+        border-radius: 5px;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      #map {
+        height: 100%;
+        width: 100%;
+        background: #090612;
+      }
+      .mapwrap {
+        position: relative;
+        min-width: 0;
+      }
+      .maptitle {
+        position: absolute;
+        z-index: 500;
+        top: 18px;
+        left: 18px;
+        background: #130b21e9;
+        border: 1px solid #72439a;
+        border-radius: 10px;
+        padding: 12px 17px;
+        pointer-events: none;
+        box-shadow: 0 8px 30px #0009;
+      }
+      .maptitle strong {
+        font:
+          700 12px ui-monospace,
+          monospace;
+        letter-spacing: 2px;
+        color: #e7caff;
+      }
+      .maptitle small {
+        display: block;
+        color: #bda6d6;
+        margin-top: 4px;
+      }
+      .leaflet-container {
+        font-family: inherit;
+      }
+      .leaflet-popup-content-wrapper,
+      .leaflet-popup-tip {
+        background: #1b102a;
+        color: #f4eaff;
+        border: 1px solid #6b4191;
+      }
+      .leaflet-control-zoom a {
+        background: #1b102a !important;
+        color: #d7aaff !important;
+        border-color: #563270 !important;
+      }
+      .leaflet-control-attribution {
+        background: #10091bdc !important;
+        color: #a99aba !important;
+      }
+      .leaflet-control-attribution a {
+        color: #ce9cff !important;
+      }
+      #status {
+        white-space: pre-wrap;
+        color: #d4aaff;
+        font:
+          12px/1.6 ui-monospace,
+          monospace;
+        margin-top: 12px;
+        overflow-wrap: anywhere;
+      }
+      .legend {
+        background: #150c25ed;
+        padding: 10px;
+        border: 1px solid #5d3b7b;
+        border-radius: 8px;
+        color: white;
+        font-size: 12px;
+      }
+      .dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 5px;
+      }
+      @media (max-width: 740px) {
+        .app {
+          grid-template-columns: 1fr;
+          grid-template-rows: 50dvh 50dvh;
+        }
+        aside {
+          grid-row: 2;
+          border-right: 0;
+          border-top: 1px solid #613887;
+        }
+        .mapwrap {
+          grid-row: 1;
+        }
+        .maptitle {
+          top: 10px;
+          left: 10px;
+          padding: 8px 11px;
+        }
+      }
+      #map .leaflet-tile-pane {
+        filter: grayscale(1) invert(1) hue-rotate(190deg) brightness(0.78)
+          contrast(0.9);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside>
+        <div class="eyebrow">GHOST-EM // RF INTELLIGENCE</div>
+        <h1>◈ SPECTRUM / MAP</h1>
+        <div class="sub">
+          Odessa · Spencer · Dundee, New York<br />All-carrier infrastructure
+          and exploratory coverage estimates<br /><span class="chip"
+            >● PASSIVE SURVEY MODE</span
+          >
+        </div>
+        <h2>Infrastructure data</h2>
+        <button id="load">↻ Load mapped towers</button
+        ><button id="reset" class="secondary">Fit region</button>
+        <div id="status">
+          Ready // press LOAD MAPPED TOWERS to query OpenStreetMap data.
+        </div>
+        <div>
+          <span class="metric"><b id="towerCount">0</b>Mapped sites</span
+          ><span class="metric"><b id="cellCount">0</b>Imported cells</span>
+        </div>
+        <label
+          ><input type="checkbox" id="sites" checked /> Show site markers</label
+        ><label
+          ><input type="checkbox" id="heat" checked /> Show estimated
+          coverage</label
+        ><label
+          ><input type="checkbox" id="cells" checked /> Show imported cell
+          markers</label
+        ><label
+          >Illustrative coverage radius:
+          <strong id="radiusLabel">3</strong> km</label
+        ><input
+          id="radius"
+          type="range"
+          min="0.5"
+          max="12"
+          step="0.5"
+          value="3"
+        /><label
+          >Coverage overlay opacity:
+          <strong id="opacityLabel">22</strong>%</label
+        ><input id="opacity" type="range" min="5" max="60" value="22" />
+        <h2>OpenCellID import</h2>
+        <div class="small">
+          Import a downloaded OpenCellID CSV containing lat, lon, mcc, mnc,
+          radio and optional cellid. This supplements mapped physical sites with
+          estimated cell locations.
+        </div>
+        <label>CSV file</label
+        ><input id="file" type="file" accept=".csv,text/csv" /><button
+          id="clear"
+          class="secondary"
+        >
+          Clear imported cells
+        </button>
+        <h2>Survey locations</h2>
+        <button class="secondary" id="add">
+          Add survey marker at map center</button
+        ><button class="secondary" id="export">Export survey CSV</button>
+        <div class="small">
+          Click the map to read coordinates. Survey markers can be added and
+          exported for later RF measurements.
+        </div>
+        <h2>Interpretation</h2>
+        <div class="note">
+          Uncolored areas are NOT verified dead zones. Tower databases can be
+          incomplete. Circular coverage overlays are deliberately simplistic:
+          they do not model terrain, sectors, frequency, transmit power, or
+          received signal strength. For low-RF site selection, validate using
+          band-specific SDR measurements.
+        </div>
+        <p class="small">
+          Infrastructure: © OpenStreetMap contributors, ODbL · Cell records: ©
+          OpenCellID contributors, CC BY-SA 4.0 (when imported). Basemap ©
+          OpenStreetMap contributors. Map tiles and Overpass requests require
+          internet access.
+        </p>
+      </aside>
+      <div class="mapwrap">
+        <div class="maptitle">
+          <strong>GH0$T // REGIONAL RF GRID</strong
+          ><small>ODESSA · SPENCER · DUNDEE</small>
+        </div>
+        <div id="map"></div>
+      </div>
+    </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+      const map = L.map("map", { preferCanvas: true });
+      const region = L.latLngBounds([42.24, -77.19], [42.59, -76.57]);
+      map.fitBounds(region);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "© OpenStreetMap contributors",
+      }).addTo(map);
+      const physical = L.layerGroup().addTo(map),
+        imported = L.layerGroup().addTo(map),
+        coverage = L.layerGroup().addTo(map),
+        surveys = L.layerGroup().addTo(map);
+      let sites = [],
+        cells = [],
+        logs = [];
+      const $ = (id) => document.getElementById(id);
+      const safe = (s) =>
+        String(s ?? "").replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      [
+        ["Odessa", 42.336, -76.787],
+        ["Spencer", 42.209, -76.493],
+        ["Dundee", 42.524, -76.976],
+      ].forEach(([n, lat, lon]) =>
+        L.marker([lat, lon], { opacity: 0.85 })
+          .addTo(map)
+          .bindPopup(safe(n) + ", NY"),
+      );
+      map.fitBounds(L.latLngBounds([42.18, -77.08], [42.6, -76.39]));
+      // Center the RF map on the consenting visitor's location
+const savedLocation = sessionStorage.getItem("ghostem_location");
+sessionStorage.removeItem("ghostem_location");
+
+if (savedLocation) {
+  try {
+    const { latitude, longitude } = JSON.parse(savedLocation);
+
+    if (
+      typeof latitude === "number" &&
+      typeof longitude === "number" &&
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      latitude >= -90 && latitude <= 90 &&
+      longitude >= -180 && longitude <= 180
+    ) {
+      map.setView([latitude, longitude], 13, {
+  animate: false
+});
+L.circleMarker([latitude, longitude], {
+  radius: 8,
+  color: "#ffffff",
+  weight: 2,
+  fillColor: "#00cfff",
+  fillOpacity: 0.9
+})
+.addTo(map)
+.bindPopup("Your shared location");
+
+    }
+  } catch (error) {
+    console.warn("Unable to restore map location.");
+  }
+}
+
+      function redraw() {
+        physical.clearLayers();
+        imported.clearLayers();
+        coverage.clearLayers();
+        let r = +$("radius").value * 1000,
+          opacity = +$("opacity").value / 100;
+        $("radiusLabel").textContent = r / 1000;
+        $("opacityLabel").textContent = Math.round(opacity * 100);
+        if ($("sites").checked)
+          for (const s of sites)
+            L.circleMarker([s.lat, s.lon], {
+              radius: 6,
+              color: "#e1b8ff",
+              fillColor: "#9333ea",
+              fillOpacity: 0.95,
+              weight: 2,
+            })
+              .bindPopup(
+                "<b>Mapped infrastructure</b><br>" +
+                  safe(s.name) +
+                  "<br>" +
+                  safe(s.tags) +
+                  "<br>OSM " +
+                  safe(s.id),
+              )
+              .addTo(physical);
+        if ($("cells").checked)
+          for (const c of cells)
+            L.circleMarker([c.lat, c.lon], {
+              radius: 3,
+              color: "#68e0d3",
+              fillOpacity: 0.8,
+              weight: 1,
+            })
+              .bindPopup(
+                "<b>Estimated cell position</b><br>" +
+                  safe(c.radio) +
+                  " / MCC " +
+                  safe(c.mcc) +
+                  " MNC " +
+                  safe(c.mnc) +
+                  "<br>Cell " +
+                  safe(c.cellid),
+              )
+              .addTo(imported);
+        if ($("heat").checked) {
+          for (const s of sites)
+            L.circle([s.lat, s.lon], {
+              radius: r,
+              stroke: false,
+              fillColor: "#a855f7",
+              fillOpacity: opacity,
+              interactive: false,
+            }).addTo(coverage);
+          for (const c of cells)
+            L.circle([c.lat, c.lon], {
+              radius: r * 0.65,
+              stroke: false,
+              fillColor: "#50cfc0",
+              fillOpacity: opacity * 0.6,
+              interactive: false,
+            }).addTo(coverage);
+        }
+        $("towerCount").textContent = sites.length;
+        $("cellCount").textContent = cells.length;
+      }
+      ["sites", "heat", "cells", "radius", "opacity"].forEach((id) =>
+        $(id).addEventListener("input", redraw),
+      );
+      $("reset").onclick = () =>
+        map.fitBounds(L.latLngBounds([42.18, -77.08], [42.6, -76.39]));
+      // Query three compact zones instead of one expensive regional request.
+      const zones = [
+        ["Odessa", [42.27, -76.91, 42.43, -76.65]],
+        ["Spencer", [42.14, -76.65, 42.33, -76.39]],
+        ["Dundee", [42.43, -77.13, 42.62, -76.84]],
+      ];
+      const overpassHosts = [
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+        "https://overpass.nchc.org.tw/api/interpreter",
+        "https://overpass-api.de/api/interpreter",
+      ];
+      function makeQuery(b) {
+        const bb = b.join(",");
+        return `[out:json][timeout:25];(nwr["tower:type"="communication"](${bb});nwr["communication:mobile_phone"="yes"](${bb});nwr["man_made"="communications_tower"](${bb});nwr["man_made"="tower"]["tower:type"="communication"](${bb}););out center;`;
+      }
+      async function requestZone(zone, endpoint) {
+        const controller = new AbortController(),
+          timer = setTimeout(() => controller.abort(), 16000);
+        try {
+          const url =
+            endpoint + "?data=" + encodeURIComponent(makeQuery(zone[1]));
+          const res = await fetch(url, { signal: controller.signal });
+          if (!res.ok) throw Error("HTTP " + res.status);
+          const json = await res.json();
+          if (!Array.isArray(json.elements)) throw Error("Unexpected response");
+          return json.elements;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      $("load").onclick = async () => {
+        const btn = $("load");
+        btn.disabled = true;
+        let all = [],
+          failures = [];
+        try {
+          for (let z = 0; z < zones.length; z++) {
+            let done = false;
+            for (let i = 0; i < overpassHosts.length; i++) {
+              $("status").textContent =
+                `Loading ${zones[z][0]} (${z + 1}/3), source ${i + 1}/${overpassHosts.length}…`;
+              try {
+                const found = await requestZone(zones[z], overpassHosts[i]);
+                all.push(...found);
+                done = true;
+                break;
+              } catch (err) {
+                failures.push(
+                  zones[z][0] +
+                    ": " +
+                    new URL(overpassHosts[i]).host +
+                    " " +
+                    (err.name === "AbortError" ? "timeout" : err.message),
+                );
+              }
+            }
+            if (!done)
+              $("status").textContent =
+                `Could not retrieve ${zones[z][0]}; continuing…`;
+          }
+          const unique = new Map();
+          for (const e of all) {
+            const lat = e.lat ?? e.center?.lat,
+              lon = e.lon ?? e.center?.lon;
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+            unique.set(e.type + "/" + e.id, {
+              lat,
+              lon,
+              name: e.tags?.name || e.tags?.operator || "Unnamed site",
+              tags: Object.entries(e.tags || {})
+                .filter(([k]) =>
+                  /communication|tower|operator|man_made/.test(k),
+                )
+                .map(([k, v]) => k + ": " + v)
+                .join(" · "),
+              id: e.type + "/" + e.id,
+            });
+          }
+          sites = [...unique.values()];
+          redraw();
+          $("status").textContent =
+            `Retrieved ${sites.length} mapped infrastructure sites from ${zones.length - failures.filter((x) => x.includes("timeout")).length / overpassHosts.length} or fewer regional queries. ${failures.length ? "Some requests failed; results may be incomplete. " : ""}These are NOT verified cellular towers.`;
+          if (!all.length)
+            $("status").textContent =
+              "No tower records retrieved. Public Overpass endpoints may be unavailable or block local HTML requests. Try again later or import OpenCellID CSV. Last errors: " +
+              failures.slice(-3).join(" | ");
+        } catch (err) {
+          $("status").textContent = "Lookup failed: " + err.message;
+        } finally {
+          btn.disabled = false;
+        }
+      };
+      function parseCSV(text) {
+        const lines = text
+          .replace(/^\uFEFF/, "")
+          .split(/\r?\n/)
+          .filter(Boolean);
+        if (!lines.length) return [];
+        function split(line) {
+          let out = [],
+            part = "",
+            q = false;
+          for (let i = 0; i < line.length; i++) {
+            let ch = line[i];
+            if (ch === '"') {
+              if (q && line[i + 1] === '"') {
+                part += '"';
+                i++;
+              } else q = !q;
+            } else if (ch === "," && !q) {
+              out.push(part);
+              part = "";
+            } else part += ch;
+          }
+          out.push(part);
+          return out;
+        }
+        let headers = split(lines.shift()).map((x) => x.trim().toLowerCase());
+        let ix = (n) => headers.indexOf(n);
+        if (ix("lat") < 0 || ix("lon") < 0)
+          throw Error("CSV requires lat and lon columns");
+        return lines
+          .map((line) => {
+            let x = split(line);
+            return {
+              lat: Number(x[ix("lat")]),
+              lon: Number(x[ix("lon")]),
+              mcc: ix("mcc") >= 0 ? x[ix("mcc")] : "",
+              mnc: ix("mnc") >= 0 ? x[ix("mnc")] : "",
+              radio: ix("radio") >= 0 ? x[ix("radio")] : "",
+              cellid: ix("cellid") >= 0 ? x[ix("cellid")] : "",
+            };
+          })
+          .filter(
+            (c) =>
+              Number.isFinite(c.lat) &&
+              Number.isFinite(c.lon) &&
+              c.lat >= 42.15 &&
+              c.lat <= 42.64 &&
+              c.lon >= -77.13 &&
+              c.lon <= -76.35,
+          );
+      }
+      $("file").onchange = async (e) => {
+        let f = e.target.files?.[0];
+        if (!f) return;
+        try {
+          cells = parseCSV(await f.text());
+          redraw();
+          $("status").textContent =
+            "Imported " +
+            cells.length +
+            " regional cell records from " +
+            f.name;
+        } catch (err) {
+          $("status").textContent = "Import error: " + err.message;
+        }
+      };
+      $("clear").onclick = () => {
+        cells = [];
+        $("file").value = "";
+        redraw();
+      };
+      map.on("click", (e) => {
+        $("status").textContent =
+          "Selected " +
+          e.latlng.lat.toFixed(6) +
+          ", " +
+          e.latlng.lng.toFixed(6);
+      });
+      $("add").onclick = () => {
+        let p = map.getCenter(),
+          label = prompt(
+            "Survey marker label:",
+            "RF survey " + (logs.length + 1),
+          );
+        if (label === null) return;
+        logs.push({
+          label,
+          lat: p.lat,
+          lng: p.lng,
+          date: new Date().toISOString(),
+        });
+        L.marker(p)
+          .addTo(surveys)
+          .bindPopup("<b>Survey waypoint</b><br>" + safe(label));
+        $("status").textContent = "Added waypoint: " + label;
+      };
+      $("export").onclick = () => {
+        let csv =
+          "label,latitude,longitude,timestamp\n" +
+          logs
+            .map((x) =>
+              [JSON.stringify(x.label), x.lat, x.lng, x.date].join(","),
+            )
+            .join("\n");
+        let a = document.createElement("a"),
+          url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+        a.href = url;
+        a.download = "odessa_rf_survey_waypoints.csv";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+      redraw();
+    </script>
+  </body>
+</html>
