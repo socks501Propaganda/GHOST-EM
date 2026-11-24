@@ -340,10 +340,10 @@ def main():
     try:
         import pyfiglet
 
-        print(pyfiglet.figlet_format("TRACK-EM"))
+        print(pyfiglet.figlet_format("GHO$T-EM"))
     except ImportError:
         print("GHOST-EM")
-    print("Made by GHO$T. GEOLOCATE PHONES VIA URL.")
+    print("MADE BY WE$-GHO$T. FUCK THE FEDS.")
     from wsgiref.simple_server import make_server, WSGIRequestHandler
 
     class QuietHandler(WSGIRequestHandler):
