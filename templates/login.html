@@ -4,6 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sign in | GHOST-EM</title>
+    {% if turnstile_site_key %}
+      <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    {% endif %}
     <style>
       body { color-scheme: dark; background: #130d20; color: #f4eaff; font: 1rem system-ui; padding: 2rem 1rem; }
       main { max-width: 24rem; margin: 8vh auto; }
@@ -20,6 +23,9 @@
         {% csrf_token %}
         {{ form.as_p }}
         <input type="hidden" name="next" value="{{ next }}">
+        {% if turnstile_site_key %}
+          <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-action="login"></div>
+        {% endif %}
         <button type="submit">Sign in</button>
       </form>
     </main>
