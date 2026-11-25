@@ -493,13 +493,44 @@ L.circleMarker([latitude, longitude], {
         $("cellularCount").textContent = sites.filter((site) => site.cellular).length;
         $("cellCount").textContent = cells.length;
       }
-      ["sites", "heat", "cells", "radius", "opacity"].forEach((id) =>
-        $(id).addEventListener("input", redraw),
-      );
-      for (const [id, layer] of [["wigleLayer", wigle], ["surveyLayer", surveys]]) {
+      const layerIds = ["sites", "heat", "cells", "wigleLayer", "surveyLayer"];
+      const layerSettingsKey = "ghostem.rf-map.layers";
+
+      function saveLayerSettings() {
+        try {
+          const settings = Object.fromEntries(layerIds.map((id) => [id, $(id).checked]));
+          localStorage.setItem(layerSettingsKey, JSON.stringify(settings));
+        } catch {
+          // Layer controls still work when browser storage is unavailable.
+        }
+      }
+
+      try {
+        const settings = JSON.parse(localStorage.getItem(layerSettingsKey));
+        for (const id of layerIds) {
+          if (typeof settings?.[id] === "boolean") $(id).checked = settings[id];
+        }
+      } catch {
+        // Keep the default checkbox states if saved settings cannot be read.
+      }
+
+      for (const id of ["sites", "heat", "cells"]) {
         $(id).addEventListener("change", () => {
+          saveLayerSettings();
+          redraw();
+        });
+      }
+      for (const id of ["radius", "opacity"]) $(id).addEventListener("input", redraw);
+
+      for (const [id, layer] of [["wigleLayer", wigle], ["surveyLayer", surveys]]) {
+        const updateVisibility = () => {
           if ($(id).checked) layer.addTo(map);
           else map.removeLayer(layer);
+        };
+        updateVisibility();
+        $(id).addEventListener("change", () => {
+          updateVisibility();
+          saveLayerSettings();
         });
       }
       $("reset").onclick = () =>
@@ -778,6 +809,7 @@ L.circleMarker([latitude, longitude], {
           }
           $("wigleLayer").checked = true;
           wigle.addTo(map);
+          saveLayerSettings();
           $("clearWigle").disabled = false;
           $("wigleStatus").textContent = total + " observations across " + areas.length + " grid areas.";
           map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
