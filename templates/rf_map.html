@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>GHOST-EM | Odessa RF Spectrum Mapper</title>
+    <title>GHOST-EM | RF Spectrum Mapper</title>
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -271,7 +271,7 @@
         <div class="eyebrow">GHOST-EM // RF INTELLIGENCE</div>
         <h1>◈ SPECTRUM / MAP</h1>
         <div class="sub">
-          Odessa · Spencer · Dundee, New York<br />All-carrier infrastructure
+          All-carrier infrastructure
           and exploratory coverage estimates<br /><span class="chip"
             >● PASSIVE SURVEY MODE</span
           >
@@ -347,8 +347,7 @@
       </aside>
       <div class="mapwrap">
         <div class="maptitle">
-          <strong>GH0$T // REGIONAL RF GRID</strong
-          ><small>ODESSA · SPENCER · DUNDEE</small>
+          <strong>GH0$T // REGIONAL RF GRID</strong>
         </div>
         <div id="map"></div>
       </div>
@@ -382,15 +381,6 @@
               "'": "&#39;",
             })[c],
         );
-      [
-        ["Odessa", 42.336, -76.787],
-        ["Spencer", 42.209, -76.493],
-        ["Dundee", 42.524, -76.976],
-      ].forEach(([n, lat, lon]) =>
-        L.marker([lat, lon], { opacity: 0.85 })
-          .addTo(map)
-          .bindPopup(safe(n) + ", NY"),
-      );
       map.fitBounds(L.latLngBounds([42.18, -77.08], [42.6, -76.39]));
       // Center the RF map on the consenting visitor's location
 const savedLocation = sessionStorage.getItem("ghostem_location");
