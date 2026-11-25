@@ -280,10 +280,11 @@
         <button id="load">↻ Load mapped towers</button
         ><button id="reset" class="secondary">Fit region</button>
         <div id="status">
-          Ready // press LOAD MAPPED TOWERS to query OpenStreetMap data.
+          Load mapped towers to search the visible area using OpenStreetMap.
         </div>
         <div>
           <span class="metric"><b id="towerCount">0</b>Mapped sites</span
+          ><span class="metric"><b id="cellularCount">0</b>Cellular-tagged sites</span
           ><span class="metric"><b id="cellCount">0</b>Imported cells</span>
         </div>
         <label
@@ -438,13 +439,13 @@ L.circleMarker([latitude, longitude], {
           for (const s of sites)
             L.circleMarker([s.lat, s.lon], {
               radius: 6,
-              color: "#e1b8ff",
-              fillColor: "#9333ea",
+              color: s.cellular ? "#ffd27f" : "#e1b8ff",
+              fillColor: s.cellular ? "#b96900" : "#9333ea",
               fillOpacity: 0.95,
               weight: 2,
             })
               .bindPopup(
-                "<b>Mapped infrastructure</b><br>" +
+                (s.cellular ? "<b>Mapped cellular site</b><br>" : "<b>Mapped communications site</b><br>") +
                   safe(s.name) +
                   "<br>" +
                   safe(s.tags) +
@@ -490,6 +491,7 @@ L.circleMarker([latitude, longitude], {
             }).addTo(coverage);
         }
         $("towerCount").textContent = sites.length;
+        $("cellularCount").textContent = sites.filter((site) => site.cellular).length;
         $("cellCount").textContent = cells.length;
       }
       ["sites", "heat", "cells", "radius", "opacity"].forEach((id) =>
@@ -497,32 +499,25 @@ L.circleMarker([latitude, longitude], {
       );
       $("reset").onclick = () =>
         map.fitBounds(L.latLngBounds([42.18, -77.08], [42.6, -76.39]));
-      // Query three compact zones instead of one expensive regional request.
-      const zones = [
-        ["Odessa", [42.27, -76.91, 42.43, -76.65]],
-        ["Spencer", [42.14, -76.65, 42.33, -76.39]],
-        ["Dundee", [42.43, -77.13, 42.62, -76.84]],
-      ];
       const overpassHosts = [
-        "https://overpass.kumi.systems/api/interpreter",
         "https://overpass.private.coffee/api/interpreter",
-        "https://overpass.nchc.org.tw/api/interpreter",
         "https://overpass-api.de/api/interpreter",
       ];
       function makeQuery(b) {
         const bb = b.join(",");
-        return `[out:json][timeout:25];(nwr["tower:type"="communication"](${bb});nwr["communication:mobile_phone"="yes"](${bb});nwr["man_made"="communications_tower"](${bb});nwr["man_made"="tower"]["tower:type"="communication"](${bb}););out center;`;
+        return `[out:json][timeout:10];(nwr["tower:type"="communication"](${bb});nwr["communication:mobile_phone"="yes"](${bb});nwr["man_made"="communications_tower"](${bb});nwr["man_made"="tower"]["tower:type"="communication"](${bb}););out center;`;
       }
-      async function requestZone(zone, endpoint) {
+      async function requestSites(bounds, endpoint) {
         const controller = new AbortController(),
           timer = setTimeout(() => controller.abort(), 16000);
         try {
           const url =
-            endpoint + "?data=" + encodeURIComponent(makeQuery(zone[1]));
+            endpoint + "?data=" + encodeURIComponent(makeQuery(bounds));
           const res = await fetch(url, { signal: controller.signal });
           if (!res.ok) throw Error("HTTP " + res.status);
           const json = await res.json();
           if (!Array.isArray(json.elements)) throw Error("Unexpected response");
+          if (json.remark) throw Error("Incomplete Overpass response");
           return json.elements;
         } finally {
           clearTimeout(timer);
@@ -530,42 +525,45 @@ L.circleMarker([latitude, longitude], {
       }
       $("load").onclick = async () => {
         const btn = $("load");
+        const view = map.getBounds();
+        const south = Math.max(-90, view.getSouth());
+        const north = Math.min(90, view.getNorth());
+        const west = L.Util.wrapNum(view.getWest(), [-180, 180]);
+        const east = west + (view.getEast() - view.getWest());
+        if (north - south > 2 || east - west > 2 || east > 180) {
+          $("status").textContent = "Zoom in or pan away from the international date line to load mapped towers.";
+          return;
+        }
+
         btn.disabled = true;
-        let all = [],
-          failures = [];
         try {
-          for (let z = 0; z < zones.length; z++) {
-            let done = false;
-            for (let i = 0; i < overpassHosts.length; i++) {
-              $("status").textContent =
-                `Loading ${zones[z][0]} (${z + 1}/3), source ${i + 1}/${overpassHosts.length}…`;
-              try {
-                const found = await requestZone(zones[z], overpassHosts[i]);
-                all.push(...found);
-                done = true;
-                break;
-              } catch (err) {
-                failures.push(
-                  zones[z][0] +
-                    ": " +
-                    new URL(overpassHosts[i]).host +
-                    " " +
-                    (err.name === "AbortError" ? "timeout" : err.message),
-                );
-              }
+          let records = [];
+          let receivedResults = false;
+          const failures = [];
+          for (const endpoint of overpassHosts) {
+            $("status").textContent = "Loading mapped towers from " + new URL(endpoint).host + "…";
+            try {
+              records = await requestSites([south, west, north, east], endpoint);
+              receivedResults = true;
+              if (records.length) break;
+            } catch (error) {
+              failures.push(error.name === "AbortError" ? "timeout" : error.message);
             }
-            if (!done)
-              $("status").textContent =
-                `Could not retrieve ${zones[z][0]}; continuing…`;
           }
+          if (!receivedResults) {
+            $("status").textContent = "Tower lookup failed. " + failures.join(" · ") + ". Try again or import an OpenCellID CSV.";
+            return;
+          }
+
           const unique = new Map();
-          for (const e of all) {
+          for (const e of records) {
             const lat = e.lat ?? e.center?.lat,
               lon = e.lon ?? e.center?.lon;
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
             unique.set(e.type + "/" + e.id, {
               lat,
               lon,
+              cellular: e.tags?.["communication:mobile_phone"] === "yes",
               name: e.tags?.name || e.tags?.operator || "Unnamed site",
               tags: Object.entries(e.tags || {})
                 .filter(([k]) =>
@@ -578,12 +576,10 @@ L.circleMarker([latitude, longitude], {
           }
           sites = [...unique.values()];
           redraw();
-          $("status").textContent =
-            `Retrieved ${sites.length} mapped infrastructure sites from ${zones.length - failures.filter((x) => x.includes("timeout")).length / overpassHosts.length} or fewer regional queries. ${failures.length ? "Some requests failed; results may be incomplete. " : ""}These are NOT verified cellular towers.`;
-          if (!all.length)
-            $("status").textContent =
-              "No tower records retrieved. Public Overpass endpoints may be unavailable or block local HTML requests. Try again later or import OpenCellID CSV. Last errors: " +
-              failures.slice(-3).join(" | ");
+          const cellularCount = sites.filter((site) => site.cellular).length;
+          $("status").textContent = sites.length
+            ? `Loaded ${sites.length} mapped sites, including ${cellularCount} tagged for mobile phone service.`
+            : "OpenStreetMap returned no mapped sites for this view. Pan or zoom to another area, or import an OpenCellID CSV.";
         } catch (err) {
           $("status").textContent = "Lookup failed: " + err.message;
         } finally {
