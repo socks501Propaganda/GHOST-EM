@@ -211,6 +211,65 @@
         position: relative;
         min-width: 0;
       }
+      .map-search {
+        position: absolute;
+        z-index: 1000;
+        top: 12px;
+        right: 12px;
+        max-width: calc(100% - 60px);
+      }
+      #searchToggle {
+        display: grid;
+        position: relative;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+        margin: 0 0 0 auto;
+        padding: 0;
+        background: #1b102a;
+      }
+      #searchToggle::before {
+        content: "";
+        width: 12px;
+        height: 12px;
+        border: 2px solid #e9cbff;
+        border-radius: 50%;
+        transform: translate(-2px, -2px);
+      }
+      #searchToggle::after {
+        content: "";
+        position: absolute;
+        top: 25px;
+        left: 24px;
+        width: 7px;
+        height: 2px;
+        border-radius: 2px;
+        background: #e9cbff;
+        transform: rotate(45deg);
+      }
+      #addressPanel {
+        width: min(325px, 100%);
+        margin-top: 6px;
+        padding: 10px;
+        background: #1b102a;
+        border: 1px solid #72439a;
+        border-radius: 9px;
+        box-shadow: 0 8px 20px #07040f99;
+      }
+      #addressPanel label { margin: 0 0 5px; }
+      .address-fields { display: flex; gap: 6px; }
+      .address-fields input {
+        min-width: 0;
+        flex: 1;
+        padding: 7px;
+        border: 1px solid #613887;
+        border-radius: 6px;
+        background: #120b20;
+        color: inherit;
+      }
+      .address-fields button { padding: 7px 9px; margin: 0; }
+      #addressResults button { display: block; width: 100%; text-align: left; padding: 6px 8px; }
+      #addressSearchStatus:empty, #addressResults:empty { display: none; }
       .leaflet-container {
         font-family: inherit;
       }
@@ -298,6 +357,22 @@
         </aside>
         <div class="mapwrap">
           <div id="map" aria-label="RF survey map"></div>
+          <div class="map-search">
+            <button id="searchToggle" type="button" aria-label="Search for an address" aria-expanded="false" aria-controls="addressPanel"></button>
+            <div id="addressPanel" hidden>
+              <form id="addressSearch" method="post" action="{% url 'rf_address_search' %}">
+                {% csrf_token %}
+                <label for="addressQuery">U.S. street address</label>
+                <div class="address-fields">
+                  <input id="addressQuery" name="address" type="search" maxlength="250" placeholder="Street, city, state or ZIP" required>
+                  <button type="submit">Go</button>
+                </div>
+              </form>
+              <p id="addressSearchStatus" class="small" role="status"></p>
+              <div id="addressResults"></div>
+              <p class="small">Search powered by the U.S. Census Geocoder.</p>
+            </div>
+          </div>
         </div>
       </div>
       <div class="map-tools" aria-label="RF map tools">
@@ -1267,6 +1342,87 @@
           legacyTimer = setTimeout(refreshLegacyCbrs, 300);
         }
       });
+      const addressPanel = $("addressPanel");
+      const searchToggle = $("searchToggle");
+      const addressForm = $("addressSearch");
+      const addressQuery = $("addressQuery");
+      const addressStatus = $("addressSearchStatus");
+      const addressResults = $("addressResults");
+      let addressMarker;
+      let addressRequest;
+
+      function setAddressPanel(open) {
+        addressPanel.hidden = !open;
+        searchToggle.setAttribute("aria-expanded", String(open));
+        if (open) addressQuery.focus();
+        else searchToggle.focus();
+      }
+
+      searchToggle.onclick = () => setAddressPanel(addressPanel.hidden);
+      document.querySelector(".map-search").addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || addressPanel.hidden) return;
+        event.stopPropagation();
+        setAddressPanel(false);
+      });
+
+      function showAddress({ lat, lng, label }) {
+        const point = [lat, lng];
+        if (!addressMarker) addressMarker = L.marker(point).addTo(map);
+        else addressMarker.setLatLng(point);
+        const popup = document.createElement("span");
+        popup.textContent = label;
+        addressMarker.bindPopup(popup);
+        map.setView(point, Math.max(map.getZoom(), 16));
+        addressMarker.openPopup();
+        addressStatus.textContent = label;
+        setAddressPanel(false);
+      }
+
+      addressForm.onsubmit = async (event) => {
+        event.preventDefault();
+        if (addressRequest) addressRequest.abort();
+        const controller = new AbortController();
+        addressRequest = controller;
+        addressResults.replaceChildren();
+        addressStatus.textContent = "Searching…";
+        const timer = setTimeout(() => controller.abort(), 10000);
+        try {
+          const response = await fetch(addressForm.action, {
+            method: "POST",
+            body: new URLSearchParams(new FormData(addressForm)),
+            signal: controller.signal,
+          });
+          if (addressRequest !== controller) return;
+          if (response.redirected) throw Error("Your session expired. Sign in again to search.");
+          const data = await response.json();
+          if (addressRequest !== controller) return;
+          if (!response.ok) throw Error(data.error || "Address search failed. Try again.");
+          if (!data.matches.length) {
+            addressStatus.textContent = "No matching address. Include a street number, city, and state or ZIP.";
+          } else if (data.matches.length === 1) {
+            showAddress(data.matches[0]);
+          } else {
+            addressStatus.textContent = "Choose a matching address.";
+            for (const match of data.matches) {
+              const choice = document.createElement("button");
+              choice.type = "button";
+              choice.className = "secondary";
+              choice.textContent = match.label;
+              choice.onclick = () => showAddress(match);
+              addressResults.append(choice);
+            }
+          }
+        } catch (error) {
+          if (addressRequest !== controller) return;
+          addressStatus.textContent = error.name === "AbortError"
+            ? "Address search timed out. Try again."
+            : error.message || "Address search failed. Try again.";
+        } finally {
+          clearTimeout(timer);
+          if (addressRequest === controller) addressRequest = undefined;
+        }
+      };
+
       renderWaypoints();
       redraw();
     </script>

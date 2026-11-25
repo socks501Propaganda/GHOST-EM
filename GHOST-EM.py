@@ -29,6 +29,7 @@ from django.middleware.csrf import get_token
 from django.urls import path
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
+from django.views.decorators.http import require_http_methods
 
 ##imported from GHOST IN THE SSH
 
@@ -135,6 +136,43 @@ def cbrs_protection_areas(request):
     response.headers["Content-Encoding"] = "gzip"
     response.headers["Cache-Control"] = "private, max-age=86400"
     return response
+
+
+@never_cache
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def search_address(request):
+    address = request.POST.get("address", "").strip()
+    if not 3 <= len(address) <= 250:
+        return JsonResponse({"error": "Enter a U.S. street address."}, status=400)
+    if count_request("address-search:", str(request.user.pk)) > 15:
+        return JsonResponse(
+            {"error": "Too many searches. Try again in a minute."}, status=429,
+            headers={"Retry-After": "60"},
+        )
+
+    endpoint = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
+    params = urlencode({"address": address, "benchmark": "Public_AR_Current", "format": "json"})
+    try:
+        with urlopen(endpoint + "?" + params, timeout=7) as upstream:
+            matches = json.load(upstream)["result"]["addressMatches"]
+        if not isinstance(matches, list):
+            raise TypeError("Unexpected geocoder response")
+    except (OSError, ValueError, KeyError, TypeError):
+        return JsonResponse({"error": "Address lookup is unavailable. Try again shortly."}, status=502)
+
+    results = []
+    for match in matches[:5]:
+        if not isinstance(match, dict) or not isinstance(match.get("coordinates"), dict):
+            continue
+        coordinates = match["coordinates"]
+        lat, lng = coordinates.get("y"), coordinates.get("x")
+        label = match.get("matchedAddress")
+        if (type(lat) in (int, float) and type(lng) in (int, float) and
+                -90 <= lat <= 90 and -180 <= lng <= 180 and isinstance(label, str) and label):
+            results.append({"lat": lat, "lng": lng, "label": label})
+    return JsonResponse({"matches": results})
 
 
 def count_request(scope, subject):
@@ -262,7 +300,6 @@ def submit(request):
 
 from django.contrib.auth import authenticate, login
 from django.shortcuts import redirect, render
-from django.views.decorators.http import require_http_methods
 from django.utils.html import escape
 
 
@@ -456,6 +493,7 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(next_page="login"), name="logout"),
     path("submit", submit),
     path("rf-map/", rf_map),
+    path("rf-map/address-search/", search_address, name="rf_address_search"),
     path("rf-map/cbrs/protection-areas/", cbrs_protection_areas),
     path("dashboard/login/", dashboard_login),
     path("dashboard/accounts/", dashboard_accounts, name="dashboard_accounts"),
