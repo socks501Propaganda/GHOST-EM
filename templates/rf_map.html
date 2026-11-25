@@ -218,7 +218,7 @@
         right: 12px;
         max-width: calc(100% - 60px);
       }
-      #searchToggle {
+      .map-icon {
         display: grid;
         position: relative;
         place-items: center;
@@ -228,6 +228,7 @@
         padding: 0;
         background: #1b102a;
       }
+      .map-icon + .map-icon { margin-top: 6px; }
       #searchToggle::before {
         content: "";
         width: 12px;
@@ -247,6 +248,35 @@
         background: #e9cbff;
         transform: rotate(45deg);
       }
+      #myLocation::before {
+        content: "";
+        width: 22px;
+        height: 22px;
+        background:
+          linear-gradient(#e9cbff, #e9cbff) center top / 2px 5px,
+          linear-gradient(#e9cbff, #e9cbff) center bottom / 2px 5px,
+          linear-gradient(#e9cbff, #e9cbff) left center / 5px 2px,
+          linear-gradient(#e9cbff, #e9cbff) right center / 5px 2px;
+        background-repeat: no-repeat;
+      }
+      #myLocation::after {
+        content: "";
+        position: absolute;
+        width: 11px;
+        height: 11px;
+        border: 2px solid #e9cbff;
+        border-radius: 50%;
+        background: radial-gradient(circle, #e9cbff 0 1.5px, transparent 2px);
+      }
+      #locationStatus {
+        width: min(270px, 100%);
+        margin: 6px 0 0 auto;
+        padding: 7px 9px;
+        background: #1b102a;
+        border: 1px solid #72439a;
+        border-radius: 7px;
+      }
+      #locationStatus:empty { display: none; }
       #addressPanel {
         width: min(325px, 100%);
         margin-top: 6px;
@@ -358,7 +388,8 @@
         <div class="mapwrap">
           <div id="map" aria-label="RF survey map"></div>
           <div class="map-search">
-            <button id="searchToggle" type="button" aria-label="Search for an address" aria-expanded="false" aria-controls="addressPanel"></button>
+            <button id="searchToggle" class="map-icon" type="button" aria-label="Search for an address" aria-expanded="false" aria-controls="addressPanel" title="Search for an address"></button>
+            <button id="myLocation" class="map-icon" type="button" aria-label="Back to my location" aria-describedby="locationStatus" title="Back to my location"></button>
             <div id="addressPanel" hidden>
               <form id="addressSearch" method="post" action="{% url 'rf_address_search' %}">
                 {% csrf_token %}
@@ -372,6 +403,7 @@
               <div id="addressResults"></div>
               <p class="small">Search powered by the U.S. Census Geocoder.</p>
             </div>
+            <p id="locationStatus" class="small" role="status"></p>
           </div>
         </div>
       </div>
@@ -380,8 +412,6 @@
           <h2>Infrastructure data</h2>
           <button id="load">↻ Load mapped towers</button
           ><button id="reset" class="secondary">Fit region</button>
-          <button id="myLocation" class="secondary" type="button">Back to my location</button>
-          <p id="locationStatus" class="small" role="status"></p>
           <div id="status" role="status">
             Load mapped towers to search the visible area using public tower datasets.
           </div>
