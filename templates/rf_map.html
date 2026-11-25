@@ -291,6 +291,7 @@
           <h2>Infrastructure data</h2>
           <button id="load">↻ Load mapped towers</button
           ><button id="reset" class="secondary">Fit region</button>
+          <button id="myLocation" class="secondary" type="button">Back to my location</button>
           <div id="status" role="status">
             Load mapped towers to search the visible area using public tower datasets.
           </div>
@@ -402,40 +403,75 @@
             })[c],
         );
       map.fitBounds(L.latLngBounds([42.18, -77.08], [42.6, -76.39]));
-      // Center the RF map on the consenting visitor's location
-const savedLocation = sessionStorage.getItem("ghostem_location");
-sessionStorage.removeItem("ghostem_location");
+      let myLocation = null;
+      let locationMarker = null;
 
-if (savedLocation) {
-  try {
-    const { latitude, longitude } = JSON.parse(savedLocation);
+      function rememberLocation(latitude, longitude) {
+        if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+            !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return false;
+        myLocation = [latitude, longitude];
+        if (locationMarker) {
+          locationMarker.setLatLng(myLocation);
+        } else {
+          locationMarker = L.circleMarker(myLocation, {
+            radius: 8,
+            color: "#ffffff",
+            weight: 2,
+            fillColor: "#00cfff",
+            fillOpacity: 0.9,
+          }).addTo(map).bindPopup("Your location");
+        }
+        return true;
+      }
 
-    if (
-      typeof latitude === "number" &&
-      typeof longitude === "number" &&
-      Number.isFinite(latitude) &&
-      Number.isFinite(longitude) &&
-      latitude >= -90 && latitude <= 90 &&
-      longitude >= -180 && longitude <= 180
-    ) {
-      map.setView([latitude, longitude], 13, {
-  animate: false
-});
-L.circleMarker([latitude, longitude], {
-  radius: 8,
-  color: "#ffffff",
-  weight: 2,
-  fillColor: "#00cfff",
-  fillOpacity: 0.9
-})
-.addTo(map)
-.bindPopup("Your shared location");
+      function centerOnLocation() {
+        map.setView(myLocation, Math.max(map.getZoom(), 13), { animate: false });
+      }
 
-    }
-  } catch (error) {
-    console.warn("Unable to restore map location.");
-  }
-}
+      try {
+        const savedLocation = sessionStorage.getItem("ghostem_location");
+        sessionStorage.removeItem("ghostem_location");
+        if (savedLocation) {
+          const { latitude, longitude } = JSON.parse(savedLocation);
+          if (rememberLocation(latitude, longitude)) centerOnLocation();
+        }
+      } catch {
+        // A fresh location can still be requested from the button.
+      }
+
+      $("myLocation").onclick = () => {
+        const button = $("myLocation");
+        const status = $("status");
+        if (myLocation) {
+          centerOnLocation();
+          status.textContent = "Centered on your location.";
+          return;
+        }
+        if (!navigator.geolocation) {
+          status.textContent = "This browser does not provide location access.";
+          return;
+        }
+        button.disabled = true;
+        status.textContent = "Finding your location…";
+        navigator.geolocation.getCurrentPosition(
+          ({ coords }) => {
+            button.disabled = false;
+            if (!rememberLocation(coords.latitude, coords.longitude)) {
+              status.textContent = "The browser returned an invalid location.";
+              return;
+            }
+            centerOnLocation();
+            status.textContent = "Centered on your location.";
+          },
+          ({ code }) => {
+            button.disabled = false;
+            status.textContent = code === 1
+              ? "Location access was denied. Allow it in your browser and try again."
+              : "Could not determine your location. Try again.";
+          },
+          { timeout: 10000 },
+        );
+      };
 
       function redraw() {
         physical.clearLayers();
