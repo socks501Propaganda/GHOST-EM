@@ -134,6 +134,17 @@
         display: block;
         margin: 12px 0 5px;
       }
+      #waypointLabel {
+        width: 100%;
+        padding: 8px;
+        background: #21142f;
+        color: inherit;
+        border: 1px solid #4e3269;
+        border-radius: 8px;
+      }
+      #waypointList { list-style: none; margin: 8px 0; padding: 0; }
+      #waypointList li { padding: 8px 0; border-bottom: 1px solid #45275e; overflow-wrap: anywhere; }
+      #waypointList button { padding: 4px 8px; font-size: 12px; }
       .metric {
         display: inline-block;
         padding: 12px 14px;
@@ -265,7 +276,7 @@
       }
     </style>
   </head>
-  <body>
+  <body data-survey-owner="{{ survey_owner }}">
     <div class="app">
       <aside>
         <div class="eyebrow">GHOST-EM // RF INTELLIGENCE</div>
@@ -328,14 +339,16 @@
         <button class="secondary" id="clearWigle" disabled>Clear WiGLE layer</button>
         <p class="small" id="wigleStatus" role="status"></p>
         <a href="https://wigle.net/" target="_blank" rel="noopener noreferrer">Open the WiGLE map</a>
-        <h2>Survey locations</h2>
-        <button class="secondary" id="add">
-          Add survey marker at map center</button
-        ><button class="secondary" id="export">Export survey CSV</button>
-        <div class="small">
-          Click the map to read coordinates. Survey markers can be added and
-          exported for later RF measurements.
-        </div>
+        <h2>Survey waypoints</h2>
+        <p class="small">Waypoints are saved for your account in this browser.</p>
+        <form id="waypointForm">
+          <label for="waypointLabel">Waypoint label</label>
+          <input id="waypointLabel" maxlength="120" placeholder="Optional">
+          <button class="secondary" type="submit">Add at map center</button>
+        </form>
+        <button class="secondary" id="export" disabled>Export survey CSV</button>
+        <ul id="waypointList" aria-label="Saved waypoints"></ul>
+        <p class="small" id="waypointStatus" role="status"></p>
         <h2>Interpretation</h2>
         <div class="note">
           Uncolored areas are NOT verified dead zones. Tower databases can be
@@ -375,8 +388,7 @@
         wigle = L.layerGroup().addTo(map),
         surveys = L.layerGroup().addTo(map);
       let sites = [],
-        cells = [],
-        logs = [];
+        cells = [];
       const $ = (id) => document.getElementById(id);
       const safe = (s) =>
         String(s ?? "").replace(
@@ -831,39 +843,101 @@ L.circleMarker([latitude, longitude], {
           ", " +
           e.latlng.lng.toFixed(6);
       });
-      $("add").onclick = () => {
-        let p = map.getCenter(),
-          label = prompt(
-            "Survey marker label:",
-            "RF survey " + (logs.length + 1),
-          );
-        if (label === null) return;
-        logs.push({
-          label,
-          lat: p.lat,
-          lng: p.lng,
-          date: new Date().toISOString(),
+      const surveyOwner = document.body.dataset.surveyOwner;
+      const waypointKey = surveyOwner ? "ghostem.rf-map.waypoints." + surveyOwner : null;
+      const waypoints = [];
+      if (waypointKey) {
+        try {
+          const saved = JSON.parse(localStorage.getItem(waypointKey));
+          if (Array.isArray(saved)) {
+            for (const item of saved) {
+              if (typeof item?.label === "string" &&
+                  Number.isFinite(item.lat) && item.lat >= -90 && item.lat <= 90 &&
+                  Number.isFinite(item.lng) && item.lng >= -180 && item.lng <= 180 &&
+                  typeof item.date === "string" && Number.isFinite(Date.parse(item.date))) {
+                waypoints.push({ label: item.label.slice(0, 120), lat: item.lat, lng: item.lng, date: item.date });
+              }
+            }
+          }
+        } catch {
+          $("waypointStatus").textContent = "Saved waypoints could not be read.";
+        }
+      }
+
+      function saveWaypoints(message) {
+        try {
+          if (waypointKey) localStorage.setItem(waypointKey, JSON.stringify(waypoints));
+          else throw Error("No browser storage key");
+        } catch {
+          message += " Browser storage is unavailable. Export the CSV to keep a copy.";
+        }
+        $("waypointStatus").textContent = message;
+      }
+
+      function renderWaypoints() {
+        surveys.clearLayers();
+        $("waypointList").replaceChildren();
+        $("export").disabled = !waypoints.length;
+        waypoints.forEach((waypoint, index) => {
+          const point = [waypoint.lat, waypoint.lng];
+          const marker = L.marker(point)
+            .addTo(surveys)
+            .bindPopup("<b>Survey waypoint</b><br>" + safe(waypoint.label));
+          const row = document.createElement("li");
+          const name = document.createElement("div");
+          name.textContent = waypoint.label;
+          const show = document.createElement("button");
+          show.className = "secondary";
+          show.textContent = "Show";
+          show.setAttribute("aria-label", "Show " + waypoint.label);
+          show.onclick = () => {
+            const toggle = $("surveyLayer");
+            if (!toggle.checked) toggle.click();
+            map.setView(point, Math.max(map.getZoom(), 14));
+            marker.openPopup();
+          };
+          const remove = document.createElement("button");
+          remove.className = "secondary";
+          remove.textContent = "Remove";
+          remove.setAttribute("aria-label", "Remove " + waypoint.label);
+          remove.onclick = () => {
+            waypoints.splice(index, 1);
+            renderWaypoints();
+            saveWaypoints("Removed " + waypoint.label + ".");
+          };
+          row.append(name, show, remove);
+          $("waypointList").append(row);
         });
-        L.marker(p)
-          .addTo(surveys)
-          .bindPopup("<b>Survey waypoint</b><br>" + safe(label));
-        $("status").textContent = "Added waypoint: " + label;
+      }
+
+      $("waypointForm").onsubmit = (event) => {
+        event.preventDefault();
+        const point = map.getCenter().wrap();
+        const labelInput = $("waypointLabel");
+        const label = labelInput.value.trim() || "Survey waypoint " + (waypoints.length + 1);
+        waypoints.push({ label, lat: point.lat, lng: point.lng, date: new Date().toISOString() });
+        labelInput.value = "";
+        renderWaypoints();
+        saveWaypoints("Added " + label + ".");
       };
+
+      function csvLabel(label) {
+        const text = /^\s*[=+\-@]|^[\t\r\n]/.test(label) ? "'" + label : label;
+        return '"' + text.replace(/"/g, '""') + '"';
+      }
       $("export").onclick = () => {
-        let csv =
-          "label,latitude,longitude,timestamp\n" +
-          logs
-            .map((x) =>
-              [JSON.stringify(x.label), x.lat, x.lng, x.date].join(","),
-            )
-            .join("\n");
-        let a = document.createElement("a"),
-          url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+        const csv = [
+          "label,latitude,longitude,timestamp",
+          ...waypoints.map(({ label, lat, lng, date }) => [csvLabel(label), lat, lng, date].join(",")),
+        ].join("\r\n");
+        const a = document.createElement("a");
+        const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
         a.href = url;
-        a.download = "odessa_rf_survey_waypoints.csv";
+        a.download = "ghost-em-survey-waypoints.csv";
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       };
+      renderWaypoints();
       redraw();
     </script>
   </body>

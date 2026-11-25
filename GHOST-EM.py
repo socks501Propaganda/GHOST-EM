@@ -25,6 +25,7 @@ from django.http import HttpResponse, JsonResponse
 from django.http.request import split_domain_port
 from django.middleware.csrf import get_token
 from django.urls import path
+from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
 
 ##imported from GHOST IN THE SSH
@@ -117,9 +118,10 @@ document.getElementById('share').onclick=()=>{
 def index(request):
     return render(request, "new public ghostem.html")
 
+@never_cache
 @login_required
 def rf_map(request):
-    return render(request, "rf_map.html")
+    return render(request, "rf_map.html", {"survey_owner": request.user.pk})
 
 
 def count_request(scope, subject):
@@ -339,7 +341,6 @@ from django.contrib.auth.views import LoginView, LogoutView
 from django.contrib.sessions.models import Session
 from django.db import transaction
 from django.utils import timezone as django_timezone
-from django.views.decorators.cache import never_cache
 
 
 @never_cache
