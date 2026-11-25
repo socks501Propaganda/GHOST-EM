@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from queue import Queue, Empty
 
 from django.conf import settings
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.management import execute_from_command_line
 from django.http import HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
@@ -40,8 +41,8 @@ if not settings.configured:
         ALLOWED_HOSTS=allowed_hosts,
         MIDDLEWARE=[
             "django.middleware.security.SecurityMiddleware",
-            "django.middleware.csrf.CsrfViewMiddleware",
             "django.contrib.sessions.middleware.SessionMiddleware",
+            "django.middleware.csrf.CsrfViewMiddleware",
             "django.contrib.auth.middleware.AuthenticationMiddleware",
         ],
         INSTALLED_APPS=[
@@ -73,6 +74,7 @@ if not settings.configured:
         CSRF_COOKIE_SECURE=True,
         CSRF_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_AGE=3600,
+        LOGIN_URL="login",
         SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"),
     )
 ######
@@ -97,9 +99,11 @@ document.getElementById('share').onclick=()=>{
 
 
 @ensure_csrf_cookie
+@login_required
 def index(request):
     return render(request, "new public ghostem.html")
 
+@login_required
 def rf_map(request):
     return render(request, "rf_map.html")
 
@@ -144,6 +148,9 @@ def check_rate_limit(request):
 def submit(request):
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
+
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Sign in required."}, status=401)
 
     if not check_rate_limit(request):
         return JsonResponse(
@@ -226,9 +233,6 @@ def dashboard_login(request):
 
 ##
 
-from django.contrib.auth.decorators import user_passes_test
-
-from django.contrib.auth.decorators import user_passes_test
 from django.db import connection
 from django.utils.html import escape
 
@@ -313,18 +317,30 @@ def dashboard(request):
 
 ##
 
+from django.core.wsgi import get_wsgi_application
+
+application = get_wsgi_application()
+
+from django.contrib.auth.views import LoginView, LogoutView
+
+
 urlpatterns = [
     path("", index),
+    path(
+        "login/",
+        LoginView.as_view(
+            template_name="login.html",
+            next_page="/",
+            redirect_authenticated_user=True,
+        ),
+        name="login",
+    ),
+    path("logout/", LogoutView.as_view(next_page="login"), name="logout"),
     path("submit", submit),
     path("rf-map/", rf_map),
     path("dashboard/login/", dashboard_login),
     path("dashboard/", dashboard),
 ]
-
-from django.core.wsgi import get_wsgi_application
-
-application = get_wsgi_application()
-
 
 def main():
     parser = argparse.ArgumentParser(
