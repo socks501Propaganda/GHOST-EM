@@ -79,6 +79,12 @@ if not settings.configured:
         CSRF_COOKIE_SECURE=True,
         CSRF_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_AGE=3600,
+        AUTH_PASSWORD_VALIDATORS=[
+            {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+            {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+            {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+            {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+        ],
         LOGIN_URL="login",
         TURNSTILE_REQUIRED=bool(render_host),
         TURNSTILE_SITE_KEY=os.environ.get("TURNSTILE_SITE_KEY", ""),
@@ -339,6 +345,7 @@ def dashboard(request):
     <body>
         <h1>GHOST-EM Dashboard</h1>
         <p>Administrator authentication successful.</p>
+        <p><a href="/dashboard/accounts/">Manage accounts</a></p>
         <h2>Authorized submissions</h2>
         <p>Active records: {count}</p>
         <p>Retention period: 7 days</p>
@@ -380,7 +387,52 @@ from django.core.wsgi import get_wsgi_application
 
 application = get_wsgi_application()
 
+from django.contrib.auth import SESSION_KEY, get_user_model
+from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.views import LoginView, LogoutView
+from django.contrib.sessions.models import Session
+from django.db import transaction
+from django.utils import timezone as django_timezone
+from django.views.decorators.cache import never_cache
+
+
+@never_cache
+@user_passes_test(
+    lambda user: user.is_authenticated and user.is_superuser,
+    login_url="/dashboard/login/",
+)
+@require_http_methods(["GET", "POST"])
+def dashboard_accounts(request):
+    accounts = get_user_model().objects.filter(is_staff=False, is_superuser=False)
+    form = UserCreationForm()
+
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "create":
+            form = UserCreationForm(request.POST)
+            if form.is_valid():
+                form.save()
+                return redirect("dashboard_accounts")
+        elif action in {"enable", "disable"}:
+            account_id = request.POST.get("account_id", "")
+            if not account_id.isascii() or not account_id.isdecimal() or len(account_id) > 10:
+                return HttpResponse("Invalid account.", status=400)
+            with transaction.atomic():
+                if not accounts.filter(pk=int(account_id)).update(is_active=action == "enable"):
+                    return HttpResponse("Account not found.", status=404)
+                if action == "disable":
+                    sessions = Session.objects.filter(expire_date__gt=django_timezone.now())
+                    for session in sessions.iterator():
+                        if session.get_decoded().get(SESSION_KEY) == str(int(account_id)):
+                            session.delete()
+            return redirect("dashboard_accounts")
+        else:
+            return HttpResponse("Invalid account action.", status=400)
+
+    return render(
+        request, "dashboard_accounts.html",
+        {"form": form, "accounts": accounts.order_by("username")},
+    )
 
 
 urlpatterns = [
@@ -399,6 +451,7 @@ urlpatterns = [
     path("submit", submit),
     path("rf-map/", rf_map),
     path("dashboard/login/", dashboard_login),
+    path("dashboard/accounts/", dashboard_accounts, name="dashboard_accounts"),
     path("dashboard/", dashboard),
 ]
 
