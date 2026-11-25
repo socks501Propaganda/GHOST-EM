@@ -280,11 +280,11 @@
         <button id="load">↻ Load mapped towers</button
         ><button id="reset" class="secondary">Fit region</button>
         <div id="status">
-          Load mapped towers to search the visible area using OpenStreetMap.
+          Load mapped towers to search the visible area using public tower datasets.
         </div>
         <div>
           <span class="metric"><b id="towerCount">0</b>Mapped sites</span
-          ><span class="metric"><b id="cellularCount">0</b>Cellular-tagged sites</span
+          ><span class="metric"><b id="cellularCount">0</b>Cellular sites</span
           ><span class="metric"><b id="cellCount">0</b>Imported cells</span>
         </div>
         <label
@@ -339,7 +339,7 @@
           band-specific SDR measurements.
         </div>
         <p class="small">
-          Infrastructure: © OpenStreetMap contributors, ODbL · Cell records: ©
+          Infrastructure: Homeland Infrastructure Foundation-Level Data (U.S. tower layer) and © OpenStreetMap contributors, ODbL · Cell records: ©
           OpenCellID contributors, CC BY-SA 4.0 (when imported). Basemap ©
           OpenStreetMap contributors. Map tiles and Overpass requests require
           internet access.
@@ -449,8 +449,8 @@ L.circleMarker([latitude, longitude], {
                   safe(s.name) +
                   "<br>" +
                   safe(s.tags) +
-                  "<br>OSM " +
-                  safe(s.id),
+                  "<br>" +
+                  safe(s.source) + " " + safe(s.id),
               )
               .addTo(physical);
         if ($("cells").checked)
@@ -499,29 +499,76 @@ L.circleMarker([latitude, longitude], {
       );
       $("reset").onclick = () =>
         map.fitBounds(L.latLngBounds([42.18, -77.08], [42.6, -76.39]));
+      const towerLayer =
+        "https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/Cellular_Towers_in_the_United_States/FeatureServer/0/query";
       const overpassHosts = [
         "https://overpass.private.coffee/api/interpreter",
         "https://overpass-api.de/api/interpreter",
       ];
-      function makeQuery(b) {
-        const bb = b.join(",");
-        return `[out:json][timeout:10];(nwr["tower:type"="communication"](${bb});nwr["communication:mobile_phone"="yes"](${bb});nwr["man_made"="communications_tower"](${bb});nwr["man_made"="tower"]["tower:type"="communication"](${bb}););out center;`;
-      }
-      async function requestSites(bounds, endpoint) {
-        const controller = new AbortController(),
-          timer = setTimeout(() => controller.abort(), 16000);
+
+      async function fetchTowerData(url, timeout) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeout);
         try {
-          const url =
-            endpoint + "?data=" + encodeURIComponent(makeQuery(bounds));
-          const res = await fetch(url, { signal: controller.signal });
-          if (!res.ok) throw Error("HTTP " + res.status);
-          const json = await res.json();
-          if (!Array.isArray(json.elements)) throw Error("Unexpected response");
-          if (json.remark) throw Error("Incomplete Overpass response");
-          return json.elements;
+          const response = await fetch(url, { signal: controller.signal });
+          if (!response.ok) throw Error("HTTP " + response.status);
+          return await response.json();
         } finally {
           clearTimeout(timer);
         }
+      }
+
+      async function requestUSTowers([south, west, north, east]) {
+        const params = new URLSearchParams({
+          f: "json",
+          where: "1=1",
+          geometry: [west, south, east, north].join(","),
+          geometryType: "esriGeometryEnvelope",
+          inSR: "4326",
+          outSR: "4326",
+          outFields: "OBJECTID",
+          returnGeometry: "true",
+        });
+        const data = await fetchTowerData(towerLayer + "?" + params, 8000);
+        if (!Array.isArray(data.features)) throw Error("Invalid U.S. tower layer response");
+        const sites = data.features.map(({ geometry, attributes }) => ({
+          lat: geometry?.y,
+          lon: geometry?.x,
+          cellular: true,
+          name: "U.S. cellular tower record",
+          tags: "HIFLD dataset",
+          source: "HIFLD",
+          id: String(attributes.OBJECTID),
+        })).filter(({ lat, lon }) => Number.isFinite(lat) && Number.isFinite(lon));
+        return { sites, limited: data.exceededTransferLimit === true };
+      }
+
+      async function requestOSMSites(bounds, endpoint) {
+        const bb = bounds.join(",");
+        const query = `[out:json][timeout:10];(nwr["tower:type"="communication"](${bb});nwr["communication:mobile_phone"="yes"](${bb});nwr["man_made"="communications_tower"](${bb}););out center;`;
+        const data = await fetchTowerData(endpoint + "?data=" + encodeURIComponent(query), 12000);
+        if (!Array.isArray(data.elements) || data.remark) throw Error("Invalid or incomplete Overpass response");
+
+        const sites = new Map();
+        for (const e of data.elements) {
+          const lat = e.lat ?? e.center?.lat;
+          const lon = e.lon ?? e.center?.lon;
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+          const id = e.type + "/" + e.id;
+          sites.set(id, {
+            lat,
+            lon,
+            cellular: e.tags?.["communication:mobile_phone"] === "yes",
+            name: e.tags?.name || e.tags?.operator || "Unnamed site",
+            tags: Object.entries(e.tags || {})
+              .filter(([key]) => /communication|tower|operator|man_made/.test(key))
+              .map(([key, value]) => key + ": " + value)
+              .join(" · "),
+            source: "OpenStreetMap",
+            id,
+          });
+        }
+        return { sites: [...sites.values()], limited: false };
       }
       $("load").onclick = async () => {
         const btn = $("load");
@@ -537,51 +584,44 @@ L.circleMarker([latitude, longitude], {
 
         btn.disabled = true;
         try {
-          let records = [];
-          let receivedResults = false;
-          const failures = [];
-          for (const endpoint of overpassHosts) {
-            $("status").textContent = "Loading mapped towers from " + new URL(endpoint).host + "…";
+          const bounds = [south, west, north, east];
+          const providers = [
+            ["U.S. cellular tower layer", () => requestUSTowers(bounds)],
+            ...overpassHosts.map((endpoint) => [
+              new URL(endpoint).host,
+              () => requestOSMSites(bounds, endpoint),
+            ]),
+          ];
+          const emptySources = [];
+          for (const [name, request] of providers) {
+            $("status").textContent = "Loading mapped towers from " + name + "…";
+            let result;
             try {
-              records = await requestSites([south, west, north, east], endpoint);
-              receivedResults = true;
-              if (records.length) break;
-            } catch (error) {
-              failures.push(error.name === "AbortError" ? "timeout" : error.message);
+              result = await request();
+            } catch {
+              continue;
             }
-          }
-          if (!receivedResults) {
-            $("status").textContent = "Tower lookup failed. " + failures.join(" · ") + ". Try again or import an OpenCellID CSV.";
+            if (!result.sites.length) {
+              emptySources.push(name);
+              continue;
+            }
+            sites = result.sites;
+            redraw();
+            const cellularCount = sites.filter((site) => site.cellular).length;
+            $("status").textContent =
+              `Loaded ${sites.length} mapped sites, including ${cellularCount} cellular sites, from ${name}.` +
+              (result.limited ? " Zoom in to see all sites in this area." : "");
             return;
           }
 
-          const unique = new Map();
-          for (const e of records) {
-            const lat = e.lat ?? e.center?.lat,
-              lon = e.lon ?? e.center?.lon;
-            if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-            unique.set(e.type + "/" + e.id, {
-              lat,
-              lon,
-              cellular: e.tags?.["communication:mobile_phone"] === "yes",
-              name: e.tags?.name || e.tags?.operator || "Unnamed site",
-              tags: Object.entries(e.tags || {})
-                .filter(([k]) =>
-                  /communication|tower|operator|man_made/.test(k),
-                )
-                .map(([k, v]) => k + ": " + v)
-                .join(" · "),
-              id: e.type + "/" + e.id,
-            });
+          if (emptySources.length) {
+            sites = [];
+            redraw();
+            $("status").textContent = "No mapped sites returned by " + emptySources.join(", ") +
+              (emptySources.length < providers.length ? ". Other sources were unavailable." : ".");
+          } else {
+            $("status").textContent = "Tower providers are currently unavailable. Try again or import an OpenCellID CSV.";
           }
-          sites = [...unique.values()];
-          redraw();
-          const cellularCount = sites.filter((site) => site.cellular).length;
-          $("status").textContent = sites.length
-            ? `Loaded ${sites.length} mapped sites, including ${cellularCount} tagged for mobile phone service.`
-            : "OpenStreetMap returned no mapped sites for this view. Pan or zoom to another area, or import an OpenCellID CSV.";
-        } catch (err) {
-          $("status").textContent = "Lookup failed: " + err.message;
         } finally {
           btn.disabled = false;
         }
