@@ -36,26 +36,70 @@
           Segoe UI,
           sans-serif;
       }
-      .app {
+      .brand-bar {
+        position: sticky;
+        top: 0;
+        z-index: 1100;
+        padding: 12px 16px 13px;
+        text-align: center;
+        background: linear-gradient(105deg, #10071e, #241039 50%, #10071e);
+        border-bottom: 1px solid #613887;
+        box-shadow: 0 4px 25px #080311b0;
+      }
+      .brand-bar h1 {
+        margin: 0;
+        color: #d7a9ff;
+        font-size: clamp(1.5rem, 4vw, 2.5rem);
+        font-weight: 800;
+        letter-spacing: .12em;
+        line-height: 1.1;
+        text-shadow: 0 0 15px #9333ea, 0 0 35px #7e22ce;
+      }
+      .brand-bar p {
+        margin: 5px 0 0;
+        color: #c4a8ee;
+        font-size: .72rem;
+        letter-spacing: .2em;
+      }
+      .map-layout {
         display: grid;
-        grid-template-columns: 348px minmax(0, 1fr);
-        height: 100dvh;
+        grid-template-columns: 190px minmax(0, 1fr);
+        min-height: clamp(340px, 69dvh, 820px);
       }
-      aside {
-        padding: 23px;
-        overflow: auto;
-        background: linear-gradient(165deg, #180c2bef, #090513f5);
+      .layer-sidebar {
+        padding: 16px 14px;
+        background: linear-gradient(165deg, #180c2b, #090513);
         border-right: 1px solid #613887;
-        box-shadow: 10px 0 35px #0005;
-        z-index: 1000;
       }
-      h1 {
-        font-size: 23px;
-        letter-spacing: 2px;
-        margin: 0 0 7px;
-        color: #f7ecff;
-        text-shadow: 0 0 18px #9333ea8c;
+      .layer-sidebar h2 { margin-top: 0; }
+      .layer-sidebar label {
+        display: flex;
+        align-items: start;
+        gap: 7px;
+        font-size: .82rem;
       }
+      .layer-sidebar input { margin: 2px 0 0; }
+      .map-tools {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 265px), 1fr));
+        gap: 14px;
+        padding: 18px clamp(12px, 3vw, 32px) 24px;
+        border-top: 1px solid #51316c;
+      }
+      .tool-panel {
+        padding: 14px;
+        min-width: 0;
+        background: #120b20;
+        border: 1px solid #45275e;
+        border-radius: 12px;
+      }
+      .tool-panel h2:first-child { margin-top: 0; }
+      .map-notes {
+        grid-column: 1 / -1;
+        padding: 12px 14px;
+        color: var(--muted);
+      }
+      .map-notes summary { cursor: pointer; }
       h2 {
         font-size: 11px;
         text-transform: uppercase;
@@ -64,32 +108,6 @@
         color: #c994ff;
         border-bottom: 1px solid #42285a;
         padding-bottom: 8px;
-      }
-      .sub {
-        color: #b9a6d1;
-        font-size: 12px;
-        line-height: 1.6;
-        letter-spacing: 0.3px;
-      }
-      .eyebrow {
-        font:
-          10px ui-monospace,
-          monospace;
-        color: #c184ff;
-        letter-spacing: 3px;
-        margin-bottom: 8px;
-      }
-      .chip {
-        display: inline-block;
-        border: 1px solid #7943a4;
-        background: #2a1242;
-        border-radius: 99px;
-        padding: 4px 9px;
-        color: #d5aaff;
-        font:
-          10px ui-monospace,
-          monospace;
-        margin-top: 12px;
       }
       button,
       input,
@@ -182,30 +200,6 @@
         position: relative;
         min-width: 0;
       }
-      .maptitle {
-        position: absolute;
-        z-index: 500;
-        top: 18px;
-        left: 18px;
-        background: #130b21e9;
-        border: 1px solid #72439a;
-        border-radius: 10px;
-        padding: 12px 17px;
-        pointer-events: none;
-        box-shadow: 0 8px 30px #0009;
-      }
-      .maptitle strong {
-        font:
-          700 12px ui-monospace,
-          monospace;
-        letter-spacing: 2px;
-        color: #e7caff;
-      }
-      .maptitle small {
-        display: block;
-        color: #bda6d6;
-        margin-top: 4px;
-      }
       .leaflet-container {
         font-family: inherit;
       }
@@ -251,24 +245,19 @@
         border-radius: 50%;
         margin-right: 5px;
       }
-      @media (max-width: 740px) {
-        .app {
-          grid-template-columns: 1fr;
-          grid-template-rows: 50dvh 50dvh;
+      @media (max-width: 640px) {
+        .map-layout {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: auto minmax(320px, 58dvh);
         }
-        aside {
-          grid-row: 2;
+        .layer-sidebar {
+          padding: 10px 12px;
           border-right: 0;
-          border-top: 1px solid #613887;
+          border-bottom: 1px solid #51316c;
         }
-        .mapwrap {
-          grid-row: 1;
-        }
-        .maptitle {
-          top: 10px;
-          left: 10px;
-          padding: 8px 11px;
-        }
+        .layer-sidebar h2 { margin-bottom: 4px; padding-bottom: 4px; }
+        .layer-sidebar [role="group"] { display: flex; flex-wrap: wrap; gap: 5px 13px; }
+        .layer-sidebar label { margin: 3px 0; }
       }
       #map .leaflet-tile-pane {
         filter: grayscale(1) invert(1) hue-rotate(190deg) brightness(0.78)
@@ -277,102 +266,112 @@
     </style>
   </head>
   <body data-survey-owner="{{ survey_owner }}">
-    <div class="app">
-      <aside>
-        <div class="eyebrow">GHOST-EM // RF INTELLIGENCE</div>
-        <h1>◈ SPECTRUM / MAP</h1>
-        <div class="sub">
-          All-carrier infrastructure
-          and exploratory coverage estimates<br /><span class="chip"
-            >● PASSIVE SURVEY MODE</span
-          >
+    <header class="brand-bar">
+      <h1>WE$-GHO$T</h1>
+      <p>Mapping the Invisible</p>
+    </header>
+    <main>
+      <div class="map-layout">
+        <aside class="layer-sidebar" aria-label="Map layers">
+          <h2 id="layers-heading">Map layers</h2>
+          <div role="group" aria-labelledby="layers-heading">
+            <label><input type="checkbox" id="sites" checked /> Tower and infrastructure sites</label>
+            <label><input type="checkbox" id="heat" checked /> Estimated coverage</label>
+            <label><input type="checkbox" id="cells" checked /> OpenCellID estimates</label>
+            <label><input type="checkbox" id="wigleLayer" checked /> WiGLE observation density</label>
+            <label><input type="checkbox" id="surveyLayer" checked /> Survey waypoints</label>
+          </div>
+        </aside>
+        <div class="mapwrap">
+          <div id="map" aria-label="RF survey map"></div>
         </div>
-        <h2>Infrastructure data</h2>
-        <button id="load">↻ Load mapped towers</button
-        ><button id="reset" class="secondary">Fit region</button>
-        <div id="status">
-          Load mapped towers to search the visible area using public tower datasets.
-        </div>
-        <div>
-          <span class="metric"><b id="towerCount">0</b>Mapped sites</span
-          ><span class="metric"><b id="cellularCount">0</b>Cellular sites</span
-          ><span class="metric"><b id="cellCount">0</b>Imported cells</span>
-        </div>
-        <h2 id="layers-heading">Map layers</h2>
-        <div role="group" aria-labelledby="layers-heading">
-          <label><input type="checkbox" id="sites" checked /> Tower and infrastructure sites</label>
-          <label><input type="checkbox" id="heat" checked /> Estimated coverage</label>
-          <label><input type="checkbox" id="cells" checked /> OpenCellID estimates</label>
-          <label><input type="checkbox" id="wigleLayer" checked /> WiGLE observation density</label>
-          <label><input type="checkbox" id="surveyLayer" checked /> Survey waypoints</label>
-        </div>
-        <label
-          >Illustrative coverage radius:
-          <strong id="radiusLabel">3</strong> km</label
-        ><input
-          id="radius"
-          type="range"
-          min="0.5"
-          max="12"
-          step="0.5"
-          value="3"
-        /><label
-          >Coverage overlay opacity:
-          <strong id="opacityLabel">22</strong>%</label
-        ><input id="opacity" type="range" min="5" max="60" value="22" />
-        <h2>OpenCellID import</h2>
-        <div class="small">
-          Import an uncompressed OpenCellID CSV to display estimated cell locations.
-        </div>
-        <label>CSV file</label
-        ><input id="file" type="file" accept=".csv,text/csv" /><button
-          id="clear"
-          class="secondary"
-        >
-          Clear imported cells
-        </button>
-        <button class="secondary" id="fitCells" disabled>Fit imported cells</button>
-        <h2>WiGLE import</h2>
-        <p class="small">Import a WiGLE CSV you have permission to use. The map groups Wi-Fi observations into grid squares in your browser.</p>
-        <label for="wigleFile">WiGLE CSV file</label>
-        <input id="wigleFile" type="file" accept=".csv,text/csv" />
-        <button class="secondary" id="clearWigle" disabled>Clear WiGLE layer</button>
-        <p class="small" id="wigleStatus" role="status"></p>
-        <a href="https://wigle.net/" target="_blank" rel="noopener noreferrer">Open the WiGLE map</a>
-        <h2>Survey waypoints</h2>
-        <p class="small">Waypoints are saved for your account in this browser.</p>
-        <form id="waypointForm">
-          <label for="waypointLabel">Waypoint label</label>
-          <input id="waypointLabel" maxlength="120" placeholder="Optional">
-          <button class="secondary" type="submit">Add at map center</button>
-        </form>
-        <button class="secondary" id="export" disabled>Export survey CSV</button>
-        <ul id="waypointList" aria-label="Saved waypoints"></ul>
-        <p class="small" id="waypointStatus" role="status"></p>
-        <h2>Interpretation</h2>
-        <div class="note">
-          Uncolored areas are NOT verified dead zones. Tower databases can be
-          incomplete. Circular coverage overlays are deliberately simplistic:
-          they do not model terrain, sectors, frequency, transmit power, or
-          received signal strength. For low-RF site selection, validate using
-          band-specific SDR measurements.
-        </div>
-        <p class="small">
-          Infrastructure: Homeland Infrastructure Foundation-Level Data (U.S. tower layer) and © OpenStreetMap contributors, ODbL · Cell records: ©
-          <a href="https://opencellid.org/">OpenCellID contributors</a>,
-          <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>
-          (when imported). Basemap ©
-          OpenStreetMap contributors. Map tiles and Overpass requests require
-          internet access.
-        </p>
-      </aside>
-      <div class="mapwrap">
-        <div class="maptitle">
-          <strong>GH0$T // REGIONAL RF GRID</strong>
-        </div>
-        <div id="map"></div>
       </div>
-    </div>
+      <div class="map-tools" aria-label="RF map tools">
+        <section class="tool-panel">
+          <h2>Infrastructure data</h2>
+          <button id="load">↻ Load mapped towers</button
+          ><button id="reset" class="secondary">Fit region</button>
+          <div id="status" role="status">
+            Load mapped towers to search the visible area using public tower datasets.
+          </div>
+          <div>
+            <span class="metric"><b id="towerCount">0</b>Mapped sites</span
+            ><span class="metric"><b id="cellularCount">0</b>Cellular sites</span
+            ><span class="metric"><b id="cellCount">0</b>Imported cells</span>
+          </div>
+        </section>
+        <section class="tool-panel">
+          <h2>Coverage settings</h2>
+          <label for="radius"
+            >Illustrative coverage radius:
+            <strong id="radiusLabel">3</strong> km</label
+          ><input
+            id="radius"
+            type="range"
+            min="0.5"
+            max="12"
+            step="0.5"
+            value="3"
+          /><label for="opacity"
+            >Coverage overlay opacity:
+            <strong id="opacityLabel">22</strong>%</label
+          ><input id="opacity" type="range" min="5" max="60" value="22" />
+        </section>
+        <section class="tool-panel">
+          <h2>OpenCellID import</h2>
+          <div class="small">
+            Import an uncompressed OpenCellID CSV to display estimated cell locations.
+          </div>
+          <label for="file">CSV file</label
+          ><input id="file" type="file" accept=".csv,text/csv" /><button
+            id="clear"
+            class="secondary"
+          >
+            Clear imported cells
+          </button>
+          <button class="secondary" id="fitCells" disabled>Fit imported cells</button>
+        </section>
+        <section class="tool-panel">
+          <h2>WiGLE import</h2>
+          <p class="small">Import a WiGLE CSV you have permission to use. The map groups Wi-Fi observations into grid squares in your browser.</p>
+          <label for="wigleFile">WiGLE CSV file</label>
+          <input id="wigleFile" type="file" accept=".csv,text/csv" />
+          <button class="secondary" id="clearWigle" disabled>Clear WiGLE layer</button>
+          <p class="small" id="wigleStatus" role="status"></p>
+          <a href="https://wigle.net/" target="_blank" rel="noopener noreferrer">Open the WiGLE map</a>
+        </section>
+        <section class="tool-panel">
+          <h2>Survey waypoints</h2>
+          <p class="small">Waypoints are saved for your account in this browser.</p>
+          <form id="waypointForm">
+            <label for="waypointLabel">Waypoint label</label>
+            <input id="waypointLabel" maxlength="120" placeholder="Optional">
+            <button class="secondary" type="submit">Add at map center</button>
+          </form>
+          <button class="secondary" id="export" disabled>Export survey CSV</button>
+          <ul id="waypointList" aria-label="Saved waypoints"></ul>
+          <p class="small" id="waypointStatus" role="status"></p>
+        </section>
+        <details class="map-notes">
+          <summary>Map interpretation and data sources</summary>
+          <div class="note">
+            Uncolored areas are NOT verified dead zones. Tower databases can be
+            incomplete. Circular coverage overlays are deliberately simplistic:
+            they do not model terrain, sectors, frequency, transmit power, or
+            received signal strength. For low-RF site selection, validate using
+            band-specific SDR measurements.
+          </div>
+          <p class="small">
+            Infrastructure: Homeland Infrastructure Foundation-Level Data (U.S. tower layer) and © OpenStreetMap contributors, ODbL · Cell records: ©
+            <a href="https://opencellid.org/">OpenCellID contributors</a>,
+            <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>
+            (when imported). Basemap ©
+            OpenStreetMap contributors. Map tiles and Overpass requests require
+            internet access.
+          </p>
+        </details>
+      </div>
+    </main>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
       const map = L.map("map", { preferCanvas: true });
