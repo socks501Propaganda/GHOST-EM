@@ -143,6 +143,10 @@ body {
   </span>
 </p>
     <button id="share">Consent to share your location</button>
+    <form method="post" action="{% url 'logout' %}">
+      {% csrf_token %}
+      <button type="submit">Sign out</button>
+    </form>
     <p id="status" role="status"></p>
     <script>
       const status = document.getElementById("status");

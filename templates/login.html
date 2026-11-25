@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign in | GHOST-EM</title>
+    {% if turnstile_site_key %}
+      <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    {% endif %}
+    <style>
+      body { color-scheme: dark; background: #130d20; color: #f4eaff; font: 1rem system-ui; padding: 2rem 1rem; }
+      main { max-width: 24rem; margin: 8vh auto; }
+      label, input { display: block; }
+      input:not([type=hidden]) { box-sizing: border-box; width: 100%; padding: .55rem; }
+      button { padding: .6rem 1rem; background: #6d28d9; color: white; border: 0; border-radius: .3rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Sign in to GHOST-EM</h1>
+      <p>Access is limited to accounts created by an administrator.</p>
+      <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <input type="hidden" name="next" value="{{ next }}">
+        {% if turnstile_site_key %}
+          <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-action="login"></div>
+        {% endif %}
+        <button type="submit">Sign in</button>
+      </form>
+    </main>
+  </body>
+</html>

@@ -6,17 +6,23 @@ import argparse
 import os
 import hashlib
 import hmac
+import json
 import time
 import secrets
 import signal
 import sys
 import threading
 from datetime import datetime, timezone
+from functools import wraps
 from queue import Queue, Empty
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from django.conf import settings
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.management import execute_from_command_line
 from django.http import HttpResponse, JsonResponse
+from django.http.request import split_domain_port
 from django.middleware.csrf import get_token
 from django.urls import path
 from django.views.decorators.csrf import csrf_protect
@@ -40,8 +46,8 @@ if not settings.configured:
         ALLOWED_HOSTS=allowed_hosts,
         MIDDLEWARE=[
             "django.middleware.security.SecurityMiddleware",
-            "django.middleware.csrf.CsrfViewMiddleware",
             "django.contrib.sessions.middleware.SessionMiddleware",
+            "django.middleware.csrf.CsrfViewMiddleware",
             "django.contrib.auth.middleware.AuthenticationMiddleware",
         ],
         INSTALLED_APPS=[
@@ -73,6 +79,10 @@ if not settings.configured:
         CSRF_COOKIE_SECURE=True,
         CSRF_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_AGE=3600,
+        LOGIN_URL="login",
+        TURNSTILE_REQUIRED=bool(render_host),
+        TURNSTILE_SITE_KEY=os.environ.get("TURNSTILE_SITE_KEY", ""),
+        TURNSTILE_SECRET_KEY=os.environ.get("TURNSTILE_SECRET_KEY", ""),
         SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"),
     )
 ######
@@ -97,26 +107,21 @@ document.getElementById('share').onclick=()=>{
 
 
 @ensure_csrf_cookie
+@login_required
 def index(request):
     return render(request, "new public ghostem.html")
 
+@login_required
 def rf_map(request):
     return render(request, "rf_map.html")
 
 
-def check_rate_limit(request):
+def count_request(scope, subject):
     from django.db import connection
 
-    raw_ip = request.META.get("REMOTE_ADDR", "")
-
-    try:
-        client_ip = str(ipaddress.ip_address(raw_ip))
-    except ValueError:
-        return False
-
     client_key = hmac.new(
-        os.environ["SECRET_KEY"].encode(),
-        client_ip.encode(),
+        settings.SECRET_KEY.encode(),
+        (scope + subject).encode(),
         hashlib.sha256,
     ).hexdigest()
 
@@ -137,7 +142,62 @@ def check_rate_limit(request):
         )
         count = cursor.fetchone()[0]
 
-    return count <= 5
+    return count
+
+
+def check_rate_limit(request):
+    try:
+        client_ip = str(ipaddress.ip_address(request.META.get("REMOTE_ADDR", "")))
+    except ValueError:
+        return False
+    return count_request("", client_ip) <= 5
+
+
+def turnstile_passes(request, action):
+    token = request.POST.get("cf-turnstile-response", "")
+    if not token or len(token) > 2048:
+        return False
+
+    verification = Request(
+        "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+        data=urlencode({"secret": settings.TURNSTILE_SECRET_KEY, "response": token}).encode(),
+    )
+    try:
+        with urlopen(verification, timeout=4) as response:
+            result = json.load(response)
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(result, dict)
+        and result.get("success") is True
+        and result.get("action") == action
+        and result.get("hostname") == split_domain_port(request.get_host())[0]
+    )
+
+
+def protect_login(action):
+    def decorate(view):
+        @csrf_protect
+        @wraps(view)
+        def protected(request, *args, **kwargs):
+            if request.method == "POST":
+                widget_enabled = bool(settings.TURNSTILE_SITE_KEY and settings.TURNSTILE_SECRET_KEY)
+                if widget_enabled:
+                    if not turnstile_passes(request, action):
+                        return HttpResponse("Verification failed. Go back and try again.", status=403)
+                elif settings.TURNSTILE_REQUIRED or settings.TURNSTILE_SITE_KEY or settings.TURNSTILE_SECRET_KEY:
+                    return HttpResponse("Sign-in verification is unavailable.", status=503)
+
+                username = request.POST.get("username", "")[:150].casefold()
+                if count_request("login:", username) > 8:
+                    return HttpResponse(
+                        "Too many sign-in attempts. Try again in a minute.",
+                        status=429,
+                        headers={"Retry-After": "60"},
+                    )
+            return view(request, *args, **kwargs)
+        return protected
+    return decorate
 
 
 @csrf_protect
@@ -145,13 +205,14 @@ def submit(request):
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
 
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Sign in required."}, status=401)
+
     if not check_rate_limit(request):
         return JsonResponse(
             {"error": "Too many requests. Please wait a minute."},
             status=429,
         )
-
-    import json
 
     try:
         payload = json.loads(request.body)
@@ -185,13 +246,16 @@ from django.utils.html import escape
 
 
 @require_http_methods(["GET", "POST"])
-@csrf_protect
+@protect_login("admin_login")
 @ensure_csrf_cookie
 def dashboard_login(request):
     if request.user.is_authenticated and request.user.is_superuser:
         return redirect("/dashboard/")
 
     error = ""
+    widget = ""
+    if settings.TURNSTILE_SITE_KEY:
+        widget = f'<div class="cf-turnstile" data-sitekey="{escape(settings.TURNSTILE_SITE_KEY)}" data-action="admin_login"></div>'
 
     if request.method == "POST":
         username = request.POST.get("username", "")
@@ -208,6 +272,7 @@ def dashboard_login(request):
     <!doctype html>
     <html lang="en">
     <head><meta charset="utf-8"><title>GHOST-EM Login</title>
+    {"<script src='https://challenges.cloudflare.com/turnstile/v0/api.js' async defer></script>" if widget else ""}
     </head>
     <body>
       <h1>GHOST-EM Administrator Login</h1>
@@ -217,6 +282,7 @@ def dashboard_login(request):
                value="{escape(get_token(request))}">
         <label>Username <input name="username" required></label>
         <label>Password <input type="password" name="password" required></label>
+        {widget}
         <button type="submit">Sign in</button>
       </form>
     </body>
@@ -226,9 +292,6 @@ def dashboard_login(request):
 
 ##
 
-from django.contrib.auth.decorators import user_passes_test
-
-from django.contrib.auth.decorators import user_passes_test
 from django.db import connection
 from django.utils.html import escape
 
@@ -313,18 +376,31 @@ def dashboard(request):
 
 ##
 
+from django.core.wsgi import get_wsgi_application
+
+application = get_wsgi_application()
+
+from django.contrib.auth.views import LoginView, LogoutView
+
+
 urlpatterns = [
     path("", index),
+    path(
+        "login/",
+        protect_login("login")(LoginView.as_view(
+            template_name="login.html",
+            next_page="/",
+            redirect_authenticated_user=True,
+            extra_context={"turnstile_site_key": settings.TURNSTILE_SITE_KEY},
+        )),
+        name="login",
+    ),
+    path("logout/", LogoutView.as_view(next_page="login"), name="logout"),
     path("submit", submit),
     path("rf-map/", rf_map),
     path("dashboard/login/", dashboard_login),
     path("dashboard/", dashboard),
 ]
-
-from django.core.wsgi import get_wsgi_application
-
-application = get_wsgi_application()
-
 
 def main():
     parser = argparse.ArgumentParser(
