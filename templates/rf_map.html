@@ -287,15 +287,15 @@
           ><span class="metric"><b id="cellularCount">0</b>Cellular sites</span
           ><span class="metric"><b id="cellCount">0</b>Imported cells</span>
         </div>
+        <h2 id="layers-heading">Map layers</h2>
+        <div role="group" aria-labelledby="layers-heading">
+          <label><input type="checkbox" id="sites" checked /> Tower and infrastructure sites</label>
+          <label><input type="checkbox" id="heat" checked /> Estimated coverage</label>
+          <label><input type="checkbox" id="cells" checked /> OpenCellID estimates</label>
+          <label><input type="checkbox" id="wigleLayer" checked /> WiGLE observation density</label>
+          <label><input type="checkbox" id="surveyLayer" checked /> Survey waypoints</label>
+        </div>
         <label
-          ><input type="checkbox" id="sites" checked /> Show site markers</label
-        ><label
-          ><input type="checkbox" id="heat" checked /> Show estimated
-          coverage</label
-        ><label
-          ><input type="checkbox" id="cells" checked /> Show imported cell
-          markers</label
-        ><label
           >Illustrative coverage radius:
           <strong id="radiusLabel">3</strong> km</label
         ><input
@@ -321,6 +321,13 @@
           Clear imported cells
         </button>
         <button class="secondary" id="fitCells" disabled>Fit imported cells</button>
+        <h2>WiGLE import</h2>
+        <p class="small">Import a WiGLE CSV you have permission to use. The map groups Wi-Fi observations into grid squares in your browser.</p>
+        <label for="wigleFile">WiGLE CSV file</label>
+        <input id="wigleFile" type="file" accept=".csv,text/csv" />
+        <button class="secondary" id="clearWigle" disabled>Clear WiGLE layer</button>
+        <p class="small" id="wigleStatus" role="status"></p>
+        <a href="https://wigle.net/" target="_blank" rel="noopener noreferrer">Open the WiGLE map</a>
         <h2>Survey locations</h2>
         <button class="secondary" id="add">
           Add survey marker at map center</button
@@ -365,6 +372,7 @@
       const physical = L.layerGroup().addTo(map),
         imported = L.layerGroup().addTo(map),
         coverage = L.layerGroup().addTo(map),
+        wigle = L.layerGroup().addTo(map),
         surveys = L.layerGroup().addTo(map);
       let sites = [],
         cells = [],
@@ -488,6 +496,12 @@ L.circleMarker([latitude, longitude], {
       ["sites", "heat", "cells", "radius", "opacity"].forEach((id) =>
         $(id).addEventListener("input", redraw),
       );
+      for (const [id, layer] of [["wigleLayer", wigle], ["surveyLayer", surveys]]) {
+        $(id).addEventListener("change", () => {
+          if ($(id).checked) layer.addTo(map);
+          else map.removeLayer(layer);
+        });
+      }
       $("reset").onclick = () =>
         map.fitBounds(L.latLngBounds([42.18, -77.08], [42.6, -76.39]));
       const towerLayer =
@@ -617,13 +631,7 @@ L.circleMarker([latitude, longitude], {
           btn.disabled = false;
         }
       };
-      function parseCSV(text) {
-        const lines = text
-          .replace(/^\uFEFF/, "")
-          .split(/\r?\n/)
-          .filter(Boolean);
-        if (!lines.length) return [];
-        function split(line) {
+      function splitCSVRow(line) {
           let out = [],
             part = "",
             q = false;
@@ -641,8 +649,14 @@ L.circleMarker([latitude, longitude], {
           }
           out.push(part);
           return out;
-        }
-        const first = split(lines[0]).map((value) => value.trim());
+      }
+      function parseCSV(text) {
+        const lines = text
+          .replace(/^\uFEFF/, "")
+          .split(/\r?\n/)
+          .filter(Boolean);
+        if (!lines.length) return [];
+        const first = splitCSVRow(lines[0]).map((value) => value.trim());
         let headers = first.map((value) => value.toLowerCase());
         const hasHeader = headers.includes("lat") && headers.includes("lon");
         if (hasHeader) {
@@ -662,7 +676,7 @@ L.circleMarker([latitude, longitude], {
         const cellIndex = headers.indexOf(headers.includes("cellid") ? "cellid" : "cell");
         const records = [];
         for (const line of lines) {
-          const row = split(line);
+          const row = splitCSVRow(line);
           const latitude = row[latIndex]?.trim();
           const longitude = row[lonIndex]?.trim();
           if (!latitude || !longitude) continue;
@@ -711,6 +725,72 @@ L.circleMarker([latitude, longitude], {
         const bounds = L.latLngBounds();
         for (const cell of cells) bounds.extend([cell.lat, cell.lon]);
         map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
+      };
+      function parseWigleDensity(text) {
+        const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
+        if (/^WigleWifi-/i.test(lines[0] || "")) lines.shift();
+        const headers = splitCSVRow(lines.shift() || "").map((value) => value.trim().toLowerCase());
+        const latIndex = headers.findIndex((name) => ["currentlatitude", "trilat", "latitude", "lat"].includes(name));
+        const lonIndex = headers.findIndex((name) => ["currentlongitude", "trilong", "longitude", "lon"].includes(name));
+        const typeIndex = headers.indexOf("type");
+        if (latIndex < 0 || lonIndex < 0) throw Error("The file is missing WiGLE latitude and longitude columns.");
+
+        const grid = new Map();
+        for (const line of lines) {
+          const row = splitCSVRow(line);
+          const type = row[typeIndex]?.trim().toUpperCase();
+          if (type && !["WIFI", "WI-FI", "INFRA", "ADHOC"].includes(type)) continue;
+          const latitude = row[latIndex]?.trim();
+          const longitude = row[lonIndex]?.trim();
+          if (!latitude || !longitude) continue;
+          const lat = Number(latitude);
+          const lon = Number(longitude);
+          if (!(lat >= -90 && lat < 90 && lon >= -180 && lon < 180)) continue;
+          const y = Math.floor(lat * 100);
+          const x = Math.floor(lon * 100);
+          const key = y + "," + x;
+          if (!grid.has(key)) grid.set(key, { y, x, count: 0 });
+          grid.get(key).count++;
+        }
+        return [...grid.values()];
+      }
+
+      $("wigleFile").onchange = async (event) => {
+        const input = event.target;
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+          const areas = parseWigleDensity(await file.text());
+          if (input.files?.[0] !== file) return;
+          if (!areas.length) throw Error("No Wi-Fi observations with valid coordinates.");
+          wigle.clearLayers();
+          const bounds = L.latLngBounds();
+          let total = 0;
+          for (const { y, x, count } of areas) {
+            const square = L.latLngBounds([y / 100, x / 100], [(y + 1) / 100, (x + 1) / 100]);
+            bounds.extend(square);
+            total += count;
+            L.rectangle(square, {
+              color: "#62dfb9",
+              weight: 1,
+              fillOpacity: Math.min(.68, .16 + Math.log2(count) * .095),
+            }).bindTooltip(count + (count === 1 ? " Wi-Fi observation" : " Wi-Fi observations")).addTo(wigle);
+          }
+          $("wigleLayer").checked = true;
+          wigle.addTo(map);
+          $("clearWigle").disabled = false;
+          $("wigleStatus").textContent = total + " observations across " + areas.length + " grid areas.";
+          map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
+        } catch (error) {
+          if (input.files?.[0] !== file) return;
+          $("wigleStatus").textContent = "Import error: " + error.message;
+        }
+      };
+      $("clearWigle").onclick = () => {
+        wigle.clearLayers();
+        $("wigleFile").value = "";
+        $("clearWigle").disabled = true;
+        $("wigleStatus").textContent = "";
       };
       map.on("click", (e) => {
         $("status").textContent =
