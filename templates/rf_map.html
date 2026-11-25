@@ -351,6 +351,8 @@
             <button class="secondary" type="submit">Add at map center</button>
           </form>
           <button class="secondary" id="export" disabled>Export survey CSV</button>
+          <label for="waypointImport">Import survey waypoints</label>
+          <input id="waypointImport" type="file" accept=".csv,text/csv">
           <ul id="waypointList" aria-label="Saved waypoints"></ul>
           <p class="small" id="waypointStatus" role="status"></p>
         </section>
@@ -972,6 +974,58 @@
         const text = /^\s*[=+\-@]|^[\t\r\n]/.test(label) ? "'" + label : label;
         return '"' + text.replace(/"/g, '""') + '"';
       }
+
+      function parseWaypointCSV(text) {
+        const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
+        const headers = splitCSVRow(lines.shift() || "").map((value) => value.trim().toLowerCase());
+        const columns = ["label", "latitude", "longitude", "timestamp"].map((name) => headers.indexOf(name));
+        if (columns.includes(-1)) throw Error("Use a survey CSV with label, latitude, longitude, and timestamp columns.");
+
+        const records = [];
+        let skipped = 0;
+        for (const line of lines) {
+          const row = splitCSVRow(line);
+          const [name, latitude, longitude, timestamp] = columns.map((index) => row[index]);
+          const lat = Number(latitude);
+          const lng = Number(longitude);
+          const time = Date.parse(timestamp);
+          if (!name?.trim() || name.length > 120 || !latitude?.trim() || !longitude?.trim() ||
+              !(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) || !Number.isFinite(time)) {
+            skipped++;
+            continue;
+          }
+          records.push({ label: name, lat, lng, date: new Date(time).toISOString() });
+        }
+        return { records, skipped };
+      }
+
+      $("waypointImport").onchange = async (event) => {
+        const input = event.target;
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+          const { records, skipped } = parseWaypointCSV(await file.text());
+          if (input.files?.[0] !== file) return;
+          if (!records.length) throw Error("No valid waypoints found.");
+
+          const key = ({ label, lat, lng, date }) => JSON.stringify([csvLabel(label), lat, lng, date]);
+          const known = new Set(waypoints.map(key));
+          let added = 0;
+          for (const waypoint of records) {
+            const id = key(waypoint);
+            if (known.has(id)) continue;
+            known.add(id);
+            waypoints.push(waypoint);
+            added++;
+          }
+          renderWaypoints();
+          saveWaypoints(`Imported ${added} of ${records.length} valid waypoints. ${skipped} invalid rows skipped.`);
+        } catch (error) {
+          if (input.files?.[0] === file) $("waypointStatus").textContent = "Import error: " + error.message;
+        } finally {
+          if (input.files?.[0] === file) input.value = "";
+        }
+      };
       $("export").onclick = () => {
         const csv = [
           "label,latitude,longitude,timestamp",
