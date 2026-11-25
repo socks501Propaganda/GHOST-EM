@@ -309,6 +309,13 @@
         color: #f4eaff;
         border: 1px solid #6b4191;
       }
+      .leaflet-tooltip.tower-tooltip {
+        max-width: min(260px, 70vw);
+        white-space: normal;
+        background: #1b102a;
+        color: #f4eaff;
+        border-color: #6b4191;
+      }
       .leaflet-control-zoom a {
         background: #1b102a !important;
         color: #d7aaff !important;
@@ -615,6 +622,65 @@
         requestPosition(false);
       };
 
+      const structureNames = {
+        B: "Building", BANT: "Rooftop antenna", BMAST: "Rooftop mast",
+        BPIPE: "Building with pipe", BPOLE: "Building with pole", BTWR: "Building with tower",
+        GTOWER: "Guyed tower", LTOWER: "Lattice tower", MAST: "Mast", MTOWER: "Monopole",
+        PIPE: "Pipe", POLE: "Pole", SILO: "Silo", STACK: "Smokestack",
+        TANK: "Tank", TOWER: "Communications tower", TREE: "Tree-mounted antenna",
+        UPOLE: "Utility pole or tower",
+      };
+
+      function towerText(value) {
+        if (typeof value !== "string") return "";
+        const text = value.trim().replace(/\s+/g, " ");
+        return /^(?:nan|null|n\/a|unknown|-+)$/i.test(text) ? "" : text;
+      }
+
+      function placeCase(text) {
+        return text === text.toUpperCase()
+          ? text.toLowerCase().replace(/\b\p{L}/gu, (letter) => letter.toUpperCase())
+          : text;
+      }
+
+      function towerStreet(value, knownStreet = false) {
+        const address = towerText(value)
+          .replace(/^\d+[A-Z]?(?:-\d+)?\s+/i, "")
+          .replace(/\s+\([^)]*\)$/, "");
+        const suffix = /\s+(?:road|rd|street|st|avenue|ave|drive|dr|lane|ln|boulevard|blvd|court|ct|way|place|pl|circle|cir|parkway|pkwy|terrace|ter|trail|trl|highway|hwy)\.?(?=\s+(?:N|S|E|W|NE|NW|SE|SW)$|$)/i;
+        const street = address.replace(suffix, "");
+        return (knownStreet || street !== address || /^(?:route|highway|hwy)\s+\d/i.test(address))
+          ? placeCase(street) : "";
+      }
+
+      function towerName({ town, street, name, cellular, id }) {
+        const place = placeCase(towerText(town));
+        const title = street || towerText(name) || (cellular ? "Tower " : "Site ") + id;
+        return place ? place + ": " + title : title;
+      }
+
+      function towerDescriptions(site) {
+        const title = "<b>" + safe(towerName(site)) + "</b>";
+        const fields = [
+          ["Type", site.structure || (site.cellular ? "Cellular site" : "Communications site")],
+          ["Licensee", site.licensee],
+          ["Operator", site.operator],
+          ["Owner", site.owner],
+          ["Frequency", site.frequency],
+        ];
+        const details = fields.filter(([, value]) => value)
+          .map(([label, value]) => safe(label) + ": " + safe(value));
+        return {
+          hover: [title, ...details].join("<br>"),
+          popup: [
+            title, ...details,
+            ...(site.callSign ? ["FCC call sign: " + safe(site.callSign)] : []),
+            ...(site.registration ? ["Tower registration: " + safe(site.registration)] : []),
+            safe(site.source) + " record " + safe(site.id),
+          ].join("<br>"),
+        };
+      }
+
       function redraw() {
         physical.clearLayers();
         imported.clearLayers();
@@ -624,7 +690,8 @@
         $("radiusLabel").textContent = r / 1000;
         $("opacityLabel").textContent = Math.round(opacity * 100);
         if ($("sites").checked)
-          for (const s of sites)
+          for (const s of sites) {
+            const details = towerDescriptions(s);
             L.circleMarker([s.lat, s.lon], {
               radius: 6,
               color: s.cellular ? "#ffd27f" : "#e1b8ff",
@@ -632,15 +699,10 @@
               fillOpacity: 0.95,
               weight: 2,
             })
-              .bindPopup(
-                (s.cellular ? "<b>Mapped cellular site</b><br>" : "<b>Mapped communications site</b><br>") +
-                  safe(s.name) +
-                  "<br>" +
-                  safe(s.tags) +
-                  "<br>" +
-                  safe(s.source) + " " + safe(s.id),
-              )
+              .bindTooltip(details.hover, { sticky: true, className: "tower-tooltip" })
+              .bindPopup(details.popup)
               .addTo(physical);
+          }
         if ($("cells").checked)
           for (const c of cells)
             L.circleMarker([c.lat, c.lon], {
@@ -751,17 +813,21 @@
           geometryType: "esriGeometryEnvelope",
           inSR: "4326",
           outSR: "4326",
-          outFields: "OBJECTID",
+          outFields: "OBJECTID,LocCity,LocAdd,Licensee,Callsign,StrucType,TowReg",
           returnGeometry: "true",
         });
         const data = await fetchTowerData(towerLayer + "?" + params, 8000);
         if (!Array.isArray(data.features)) throw Error("Invalid U.S. tower layer response");
-        const sites = data.features.map(({ geometry, attributes }) => ({
+        const sites = data.features.map(({ geometry, attributes = {} }) => ({
           lat: geometry?.y,
           lon: geometry?.x,
           cellular: true,
-          name: "U.S. cellular tower record",
-          tags: "HIFLD dataset",
+          town: towerText(attributes.LocCity),
+          street: towerStreet(attributes.LocAdd),
+          structure: structureNames[towerText(attributes.StrucType).toUpperCase()],
+          licensee: towerText(attributes.Licensee),
+          callSign: towerText(attributes.Callsign),
+          registration: Number(attributes.TowReg) > 0 ? String(attributes.TowReg) : "",
           source: "HIFLD",
           id: String(attributes.OBJECTID),
         })).filter(({ lat, lon }) => Number.isFinite(lat) && Number.isFinite(lon));
@@ -780,15 +846,18 @@
           const lon = e.lon ?? e.center?.lon;
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
           const id = e.type + "/" + e.id;
+          const tags = e.tags || {};
           sites.set(id, {
             lat,
             lon,
             cellular: e.tags?.["communication:mobile_phone"] === "yes",
-            name: e.tags?.name || e.tags?.operator || "Unnamed site",
-            tags: Object.entries(e.tags || {})
-              .filter(([key]) => /communication|tower|operator|man_made/.test(key))
-              .map(([key, value]) => key + ": " + value)
-              .join(" · "),
+            name: towerText(tags.name),
+            town: towerText(tags["addr:city"] || tags["addr:town"] || tags["addr:village"]),
+            street: towerStreet(tags["addr:street"], true),
+            structure: towerText(tags["tower:construction"] || tags.man_made)?.replaceAll("_", " "),
+            operator: towerText(tags.operator),
+            owner: towerText(tags.owner),
+            frequency: towerText(tags["communication:mobile_phone:frequency"] || tags.frequency),
             source: "OpenStreetMap",
             id,
           });
