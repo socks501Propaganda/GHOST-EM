@@ -13,6 +13,7 @@ import secrets
 import signal
 import sys
 import threading
+from pathlib import Path
 from datetime import datetime, timezone
 from functools import wraps
 from queue import Queue, Empty
@@ -22,7 +23,7 @@ from urllib.request import Request, urlopen
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.management import execute_from_command_line
-from django.http import HttpResponse, JsonResponse
+from django.http import FileResponse, HttpResponse, JsonResponse
 from django.http.request import split_domain_port
 from django.middleware.csrf import get_token
 from django.urls import path
@@ -125,6 +126,15 @@ def index(request):
 @login_required
 def rf_map(request):
     return render(request, "rf_map.html", {"survey_owner": request.user.pk})
+
+
+@login_required
+def cbrs_protection_areas(request):
+    dataset = Path(__file__).resolve().parent / "data" / "ntia-dpas.geojson.gz"
+    response = FileResponse(dataset.open("rb"), content_type="application/geo+json")
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers["Cache-Control"] = "private, max-age=86400"
+    return response
 
 
 def count_request(scope, subject):
@@ -446,6 +456,7 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(next_page="login"), name="logout"),
     path("submit", submit),
     path("rf-map/", rf_map),
+    path("rf-map/cbrs/protection-areas/", cbrs_protection_areas),
     path("dashboard/login/", dashboard_login),
     path("dashboard/accounts/", dashboard_accounts, name="dashboard_accounts"),
     path("dashboard/accounts/<int:account_id>/promote/", promote_account, name="promote_account"),

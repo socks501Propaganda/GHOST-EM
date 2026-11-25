@@ -79,6 +79,17 @@
         font-size: .82rem;
       }
       .layer-sidebar input { margin: 2px 0 0; }
+      .cbrs-toggle-symbol { min-width: .9em; text-align: center; }
+      .cbrs-symbol {
+        border: 0;
+        background: transparent;
+        text-shadow: 0 0 4px #000, 0 1px 2px #000;
+        text-align: center;
+        font: 700 20px/22px system-ui, sans-serif;
+      }
+      .cbrs-federal { color: #58c8ff; }
+      .cbrs-fss { color: #ffc46a; }
+      .cbrs-legacy { color: #65e2ae; }
       .map-tools {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(min(100%, 265px), 1fr));
@@ -280,6 +291,9 @@
             <label><input type="checkbox" id="cells" checked /> OpenCellID estimates</label>
             <label><input type="checkbox" id="wigleLayer" checked /> WiGLE observation density</label>
             <label><input type="checkbox" id="surveyLayer" checked /> Survey waypoints</label>
+            <label><input type="checkbox" id="federalCbrs"> <span aria-hidden="true" class="cbrs-toggle-symbol cbrs-federal">▲</span> Federal CBRS areas</label>
+            <label><input type="checkbox" id="fssCbrs"> <span aria-hidden="true" class="cbrs-toggle-symbol cbrs-fss">●</span> FSS earth stations</label>
+            <label><input type="checkbox" id="legacyCbrs"> <span aria-hidden="true" class="cbrs-toggle-symbol cbrs-legacy">◆</span> Grandfathered 3650 MHz</label>
           </div>
         </aside>
         <div class="mapwrap">
@@ -355,6 +369,15 @@
           <input id="waypointImport" type="file" accept=".csv,text/csv">
           <ul id="waypointList" aria-label="Saved waypoints"></ul>
           <p class="small" id="waypointStatus" role="status"></p>
+        </section>
+        <section class="tool-panel">
+          <h2>CBRS incumbents</h2>
+          <p class="small">Federal protection areas show the frequencies published by NTIA. FSS markers show FCC registrations. Grandfathered markers show historical FCC filings.</p>
+          <p class="small" id="federalCbrsStatus" role="status"></p>
+          <p class="small" id="fssCbrsStatus" role="status"></p>
+          <p class="small" id="legacyCbrsStatus" role="status"></p>
+          <p class="small">These reference layers do not show live incumbent activity or SAS authorization.</p>
+          <p class="small"><a href="https://www.ntia.gov/spectrum-frequency-bands/3550-3650-mhz">NTIA protection areas</a> · <a href="https://opendata.fcc.gov/Wireless/Protected-FSS-Earth-Station-Registration-Complete-/acbv-jbb4">FCC earth stations</a> · <a href="https://opendata.fcc.gov/Wireless/ULS-3650-Locations-Complete-Dataset-/r3zi-75n9">FCC grandfathered locations</a></p>
         </section>
         <details class="map-notes">
           <summary>Map interpretation and data sources</summary>
@@ -554,7 +577,7 @@
         $("cellularCount").textContent = sites.filter((site) => site.cellular).length;
         $("cellCount").textContent = cells.length;
       }
-      const layerIds = ["sites", "heat", "cells", "wigleLayer", "surveyLayer"];
+      const layerIds = ["sites", "heat", "cells", "wigleLayer", "surveyLayer", "federalCbrs", "fssCbrs", "legacyCbrs"];
       const layerSettingsKey = "ghostem.rf-map.layers";
 
       function saveLayerSettings() {
@@ -1038,6 +1061,212 @@
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       };
+      function incumbentMarker(point, kind) {
+        const symbol = { federal: "▲", fss: "●", legacy: "◆" }[kind];
+        return L.marker(point, {
+          title: { federal: "Federal CBRS protection", fss: "FSS earth station", legacy: "Grandfathered wireless filing" }[kind],
+          icon: L.divIcon({
+            className: "cbrs-symbol cbrs-" + kind,
+            html: symbol,
+            iconSize: [22, 22],
+            iconAnchor: [11, 11],
+          }),
+        });
+      }
+
+      function incumbentDetails(layer, description) {
+        return layer.bindTooltip(description, { sticky: true }).bindPopup(description);
+      }
+
+      function frequencyNumber(value) {
+        const text = String(value ?? "").replace(/,/g, "").replace(/\s*mhz\s*$/i, "").trim();
+        return text ? Number(text) : NaN;
+      }
+
+      function frequencyParts(low, high) {
+        if (!Number.isFinite(low) || !Number.isFinite(high) || low >= high) {
+          return { inBand: "Not reported", outOfBand: "Not reported" };
+        }
+        const ranges = [[low, Math.min(high, 3550)], [Math.max(low, 3700), high]];
+        const overlap = [Math.max(low, 3550), Math.min(high, 3700)];
+        const format = ([start, end]) => start + "–" + end + " MHz";
+        return {
+          inBand: overlap[0] < overlap[1] ? format(overlap) : "No CBRS overlap",
+          outOfBand: ranges.filter(([start, end]) => start < end).map(format).join(", ") || "None in this registration",
+        };
+      }
+
+      const federalAreas = L.layerGroup();
+      const fssStations = L.layerGroup();
+      const legacyStations = L.layerGroup();
+      const incumbentDatasets = {
+        federalCbrs: { layer: federalAreas, loaded: false, pending: false },
+        fssCbrs: { layer: fssStations, loaded: false, pending: false },
+        legacyCbrs: { layer: legacyStations },
+      };
+
+      async function fccRecords(dataset, params) {
+        const endpoint = "https://opendata.fcc.gov/resource/" + dataset + ".json";
+        const data = await fetchTowerData(endpoint + "?" + new URLSearchParams(params), 12000);
+        if (!Array.isArray(data)) throw Error("Unexpected FCC response");
+        return data;
+      }
+
+      function addStationMarkers(rows, group, kind, latitudeKey, longitudeKey, describe) {
+        const byLocation = new Map();
+        for (const row of rows) {
+          const lat = frequencyNumber(row[latitudeKey]);
+          const lng = frequencyNumber(row[longitudeKey]);
+          if (!(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180)) continue;
+          const point = [lat, lng];
+          const key = point.join(",");
+          if (!byLocation.has(key)) byLocation.set(key, { point, details: new Set() });
+          byLocation.get(key).details.add(describe(row));
+        }
+        for (const { point, details } of byLocation.values()) {
+          const entries = [...details];
+          const marker = incumbentMarker(point, kind).addTo(group);
+          marker.bindTooltip(entries[0] + (entries.length > 1 ? "<br>Click for all registrations here." : ""));
+          marker.bindPopup(entries.join("<hr>"), { maxHeight: 280 });
+        }
+        return byLocation.size;
+      }
+
+      const incumbentLoaders = {
+        async federalCbrs() {
+          const data = await fetchTowerData("cbrs/protection-areas/", 12000);
+          if (data.type !== "FeatureCollection") throw Error("Unexpected NTIA response");
+          L.geoJSON(data, {
+            style: (feature) => ({
+              color: "#58c8ff",
+              weight: 2,
+              dashArray: feature.properties.category === "Coastal DPA" ? null : "5 4",
+              fillOpacity: feature.properties.category === "Coastal DPA" ? .10 : .19,
+            }),
+            pointToLayer: (_feature, point) => incumbentMarker(point, "federal"),
+            onEachFeature: (feature, layer) => {
+              const { name, category, range } = feature.properties;
+              incumbentDetails(layer, "<b>" + safe(name) + "</b><br>" + safe(category) +
+                "<br>Published protection range: " + (range ? safe(range) + " MHz" : "Not reported") +
+                "<br>Federal reference span: 3500–3700 MHz<br>Source: NTIA");
+            },
+          }).addTo(federalAreas);
+          return data.features.length + " NTIA protection features loaded.";
+        },
+        async fssCbrs() {
+          const rows = await fccRecords("acbv-jbb4", {
+            $select: "number,call_sign,call_sign_licensee_name,latitude_decimal,longitude_decimal,lower_frequency,upper_frequency,tracking_telemetry_command",
+            $where: "location_status = 'Active'",
+            $limit: "2000",
+          });
+          const count = addStationMarkers(rows, fssStations, "fss", "latitude_decimal", "longitude_decimal", (row) => {
+            const bands = frequencyParts(frequencyNumber(row.lower_frequency), frequencyNumber(row.upper_frequency));
+            return "<b>FSS earth station " + safe(row.call_sign || row.number) + "</b><br>" +
+              safe(row.call_sign_licensee_name) + "<br>In-band (CBRS): " + bands.inBand +
+              "<br>Out-of-band (outside CBRS): " + bands.outOfBand +
+              (row.tracking_telemetry_command === "true" || row.tracking_telemetry_command === true ? "<br>TT&C registered" : "") +
+              "<br>Source: FCC FSS registry";
+          });
+          return count + " FCC FSS locations loaded.";
+        },
+      };
+
+      let legacyRequestVersion = 0;
+      async function refreshLegacyCbrs() {
+        const version = ++legacyRequestVersion;
+        if (!$("legacyCbrs").checked) return;
+        const status = $("legacyCbrsStatus");
+        if (map.getZoom() < 6) {
+          legacyStations.clearLayers();
+          status.textContent = "Zoom in to load grandfathered filings for the visible area.";
+          return;
+        }
+        const bounds = map.getBounds();
+        const south = Math.max(-90, bounds.getSouth());
+        const north = Math.min(90, bounds.getNorth());
+        const west = L.Util.wrapNum(bounds.getWest(), [-180, 180]);
+        const east = west + bounds.getEast() - bounds.getWest();
+        const longitudeFilter = east > 180
+          ? "(u_longitude::number >= " + west + " OR u_longitude::number <= " + (east - 360) + ")"
+          : "(u_longitude::number BETWEEN " + west + " AND " + east + ")";
+        status.textContent = "Loading FCC grandfathered filings…";
+        try {
+          const rows = await fccRecords("r3zi-75n9", {
+            $select: "u_call_sign,u_license_name,u_latitude,u_longitude,u_lower_frequency,u_upper_frequency,u_expired_date",
+            $where: "u_application_status = 'Accepted' AND u_latitude::number BETWEEN " +
+              south + " AND " + north + " AND " + longitudeFilter,
+            $order: "u_location_id",
+            $limit: "751",
+          });
+          if (version !== legacyRequestVersion) return;
+          legacyStations.clearLayers();
+          const count = addStationMarkers(rows.slice(0, 750), legacyStations, "legacy", "u_latitude", "u_longitude", (row) => {
+            const low = frequencyNumber(row.u_lower_frequency);
+            const high = frequencyNumber(row.u_upper_frequency);
+            const frequencies = Number.isFinite(low) && Number.isFinite(high) && low < high
+              ? "<br>Filing frequency: " + low + "–" + high + " MHz" : "";
+            return "<b>Grandfathered wireless filing " + safe(row.u_call_sign) + "</b><br>" +
+              safe(row.u_license_name) + "<br>Grandfathered band: 3650–3700 MHz" + frequencies +
+              (row.u_expired_date ? "<br>FCC expiration date: " + safe(row.u_expired_date.slice(0, 10)) : "") +
+              "<br>Historical FCC ULS record";
+          });
+          status.textContent = count + " grandfathered filing locations in view." +
+            (rows.length > 750 ? " Zoom in for all records." : "");
+        } catch {
+          if (version !== legacyRequestVersion) return;
+          legacyStations.clearLayers();
+          status.textContent = "FCC grandfathered filings could not be loaded. Pan or toggle the layer to retry.";
+        }
+      }
+
+      async function updateIncumbentLayer(id) {
+        const info = incumbentDatasets[id];
+        const status = $(id + "Status");
+        if (!$(id).checked) {
+          map.removeLayer(info.layer);
+          status.textContent = "";
+          if (id === "legacyCbrs") legacyRequestVersion++;
+          return;
+        }
+        info.layer.addTo(map);
+        if (id === "legacyCbrs") {
+          await refreshLegacyCbrs();
+          return;
+        }
+        if (info.loaded) {
+          status.textContent = info.summary;
+          return;
+        }
+        if (info.pending) return;
+        info.pending = true;
+        status.textContent = "Loading incumbent data…";
+        try {
+          info.summary = await incumbentLoaders[id]();
+          info.loaded = true;
+          if ($(id).checked) status.textContent = info.summary;
+        } catch {
+          info.layer.clearLayers();
+          if ($(id).checked) status.textContent = "Incumbent data could not be loaded. Toggle the layer to retry.";
+        } finally {
+          info.pending = false;
+        }
+      }
+
+      for (const id of Object.keys(incumbentDatasets)) {
+        $(id).addEventListener("change", () => {
+          saveLayerSettings();
+          updateIncumbentLayer(id);
+        });
+        updateIncumbentLayer(id);
+      }
+      let legacyTimer;
+      map.on("moveend", () => {
+        clearTimeout(legacyTimer);
+        if ($("legacyCbrs").checked) {
+          legacyRequestVersion++;
+          legacyTimer = setTimeout(refreshLegacyCbrs, 300);
+        }
+      });
       renderWaypoints();
       redraw();
     </script>
