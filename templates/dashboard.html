@@ -41,6 +41,7 @@
       <div class="bar wrap">
         <span class="brand">GHOST-EM</span>
         <nav aria-label="Dashboard navigation">
+          <a class="action" href="{% url 'dashboard_accounts' %}">Manage accounts</a>
           <a class="action" href="/rf-map/">RF map</a>
           <form method="post" action="{% url 'logout' %}">
             {% csrf_token %}
