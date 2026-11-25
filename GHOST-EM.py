@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
 import secrets
 import signal
@@ -15,6 +16,7 @@ import sys
 import threading
 from pathlib import Path
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from functools import wraps
 from queue import Queue, Empty
 from urllib.parse import urlencode
@@ -138,41 +140,122 @@ def cbrs_protection_areas(request):
     return response
 
 
+US_STATE_NAMES = dict(zip(
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN "
+    "MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split(),
+    ("Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|District of Columbia|"
+     "Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|"
+     "Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|"
+     "New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|"
+     "Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|"
+     "West Virginia|Wisconsin|Wyoming").split("|"),
+))
+PLACE_ZOOM = {"country": 5, "state": 7, "county": 9, "city": 12, "district": 13, "locality": 13}
+
+
+def geocoder_json(endpoint, params):
+    with urlopen(endpoint + "?" + urlencode(params), timeout=6) as upstream:
+        return json.load(upstream)
+
+
+def map_search_result(lat, lng, label, zoom):
+    if (type(lat) in (int, float) and type(lng) in (int, float) and
+            -90 <= lat <= 90 and -180 <= lng <= 180 and isinstance(label, str) and label.strip()):
+        return {"lat": lat, "lng": lng, "label": label, "zoom": zoom}
+    return None
+
+
+def census_matches(query):
+    data = geocoder_json(
+        "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress",
+        {"address": query, "benchmark": "Public_AR_Current", "format": "json"},
+    )
+    results = []
+    for match in data["result"]["addressMatches"][:5]:
+        coordinates = match.get("coordinates", {})
+        result = map_search_result(coordinates.get("y"), coordinates.get("x"), match.get("matchedAddress"), 16)
+        if result:
+            results.append(result)
+    return results
+
+
+def photon_matches(query):
+    wanted_name, separator, suffix = query.rpartition(",")
+    state_hint = suffix.strip()
+    state_code = state_hint.upper()
+    state_names = {name.casefold(): code for code, name in US_STATE_NAMES.items()}
+    if state_code not in US_STATE_NAMES:
+        state_code = state_names.get(state_hint.casefold())
+    state_name = US_STATE_NAMES.get(state_code) if separator else None
+    params = {"q": query, "limit": "8", "lang": "en"}
+    if state_name:
+        params["countrycode"] = "US"
+    data = geocoder_json("https://photon.komoot.io/api/", params)
+
+    results = {}
+    close_localities = {}
+    for feature in data["features"]:
+        geometry = feature.get("geometry", {})
+        if geometry.get("type") != "Point":
+            continue
+        coordinates = geometry.get("coordinates", [])
+        if len(coordinates) < 2:
+            continue
+        lng, lat = coordinates[:2]
+        place = feature.get("properties", {})
+        name = place.get("name") or ""
+        kind = place.get("type")
+        state = place.get("state") or ""
+        city = place.get("city") or ""
+        state = US_STATE_NAMES.get(state.upper(), state) if place.get("countrycode") == "US" else state
+        if state_name and state.casefold() != state_name.casefold():
+            continue
+
+        unit = " ".join(part for part in [place.get("housenumber"), place.get("street")] if part)
+        parts = [name, unit, city, state, place.get("country")]
+        label = ", ".join(dict.fromkeys(part for part in parts if part))
+        result = map_search_result(lat, lng, label, PLACE_ZOOM.get(kind, 16))
+        if not result:
+            continue
+        results.setdefault(label, result)
+
+        if (state_name and kind in {"city", "district", "locality"} and
+                SequenceMatcher(None, wanted_name.strip().casefold(), name.casefold()).ratio() >= .80):
+            previous = close_localities.get(name.casefold())
+            if previous is None or kind == "city":
+                close_localities[name.casefold()] = result
+
+    if len(close_localities) == 1:
+        return list(close_localities.values())
+    return list(results.values())[:5]
+
+
 @never_cache
 @login_required
 @require_http_methods(["POST"])
 @csrf_protect
 def search_address(request):
-    address = request.POST.get("address", "").strip()
-    if not 3 <= len(address) <= 250:
-        return JsonResponse({"error": "Enter a U.S. street address."}, status=400)
+    query = " ".join(request.POST.get("address", "").split())
+    if not 2 <= len(query) <= 250:
+        return JsonResponse({"error": "Enter a city, business name, or address."}, status=400)
     if count_request("address-search:", str(request.user.pk)) > 15:
         return JsonResponse(
             {"error": "Too many searches. Try again in a minute."}, status=429,
             headers={"Retry-After": "60"},
         )
 
-    endpoint = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
-    params = urlencode({"address": address, "benchmark": "Public_AR_Current", "format": "json"})
-    try:
-        with urlopen(endpoint + "?" + params, timeout=7) as upstream:
-            matches = json.load(upstream)["result"]["addressMatches"]
-        if not isinstance(matches, list):
-            raise TypeError("Unexpected geocoder response")
-    except (OSError, ValueError, KeyError, TypeError):
-        return JsonResponse({"error": "Address lookup is unavailable. Try again shortly."}, status=502)
+    if re.match(r"^[0-9]+[A-Za-z]?\s+\S+", query):
+        try:
+            results = census_matches(query)
+            if results:
+                return JsonResponse({"matches": results})
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass
 
-    results = []
-    for match in matches[:5]:
-        if not isinstance(match, dict) or not isinstance(match.get("coordinates"), dict):
-            continue
-        coordinates = match["coordinates"]
-        lat, lng = coordinates.get("y"), coordinates.get("x")
-        label = match.get("matchedAddress")
-        if (type(lat) in (int, float) and type(lng) in (int, float) and
-                -90 <= lat <= 90 and -180 <= lng <= 180 and isinstance(label, str) and label):
-            results.append({"lat": lat, "lng": lng, "label": label})
-    return JsonResponse({"matches": results})
+    try:
+        return JsonResponse({"matches": photon_matches(query)})
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return JsonResponse({"error": "Map search is unavailable. Try again shortly."}, status=502)
 
 
 def count_request(scope, subject):

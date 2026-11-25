@@ -388,20 +388,20 @@
         <div class="mapwrap">
           <div id="map" aria-label="RF survey map"></div>
           <div class="map-search">
-            <button id="searchToggle" class="map-icon" type="button" aria-label="Search for an address" aria-expanded="false" aria-controls="addressPanel" title="Search for an address"></button>
+            <button id="searchToggle" class="map-icon" type="button" aria-label="Search the map" aria-expanded="false" aria-controls="addressPanel" title="Search the map"></button>
             <button id="myLocation" class="map-icon" type="button" aria-label="Back to my location" aria-describedby="locationStatus" title="Back to my location"></button>
             <div id="addressPanel" hidden>
               <form id="addressSearch" method="post" action="{% url 'rf_address_search' %}">
                 {% csrf_token %}
-                <label for="addressQuery">U.S. street address</label>
+                <label for="addressQuery">City, business, or address</label>
                 <div class="address-fields">
-                  <input id="addressQuery" name="address" type="search" maxlength="250" placeholder="Street, city, state or ZIP" required>
+                  <input id="addressQuery" name="address" type="search" maxlength="250" placeholder="Warsaw, NY" required>
                   <button type="submit">Go</button>
                 </div>
               </form>
               <p id="addressSearchStatus" class="small" role="status"></p>
               <div id="addressResults"></div>
-              <p class="small">Search powered by the U.S. Census Geocoder.</p>
+              <p class="small">Search data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> via Photon and the U.S. Census Geocoder.</p>
             </div>
             <p id="locationStatus" class="small" role="status"></p>
           </div>
@@ -1395,14 +1395,14 @@
         setAddressPanel(false);
       });
 
-      function showAddress({ lat, lng, label }) {
+      function showAddress({ lat, lng, label, zoom }) {
         const point = [lat, lng];
         if (!addressMarker) addressMarker = L.marker(point).addTo(map);
         else addressMarker.setLatLng(point);
         const popup = document.createElement("span");
         popup.textContent = label;
         addressMarker.bindPopup(popup);
-        map.setView(point, Math.max(map.getZoom(), 16));
+        map.setView(point, zoom);
         addressMarker.openPopup();
         addressStatus.textContent = label;
         setAddressPanel(false);
@@ -1415,7 +1415,7 @@
         addressRequest = controller;
         addressResults.replaceChildren();
         addressStatus.textContent = "Searching…";
-        const timer = setTimeout(() => controller.abort(), 10000);
+        const timer = setTimeout(() => controller.abort(), 15000);
         try {
           const response = await fetch(addressForm.action, {
             method: "POST",
@@ -1428,11 +1428,11 @@
           if (addressRequest !== controller) return;
           if (!response.ok) throw Error(data.error || "Address search failed. Try again.");
           if (!data.matches.length) {
-            addressStatus.textContent = "No matching address. Include a street number, city, and state or ZIP.";
+            addressStatus.textContent = "No matching places. Try adding a city or state.";
           } else if (data.matches.length === 1) {
             showAddress(data.matches[0]);
           } else {
-            addressStatus.textContent = "Choose a matching address.";
+            addressStatus.textContent = "Choose a matching place.";
             for (const match of data.matches) {
               const choice = document.createElement("button");
               choice.type = "button";
