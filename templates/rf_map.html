@@ -292,6 +292,7 @@
           <button id="load">↻ Load mapped towers</button
           ><button id="reset" class="secondary">Fit region</button>
           <button id="myLocation" class="secondary" type="button">Back to my location</button>
+          <p id="locationStatus" class="small" role="status"></p>
           <div id="status" role="status">
             Load mapped towers to search the visible area using public tower datasets.
           </div>
@@ -441,36 +442,47 @@
 
       $("myLocation").onclick = () => {
         const button = $("myLocation");
-        const status = $("status");
+        const status = $("locationStatus");
         if (myLocation) {
           centerOnLocation();
           status.textContent = "Centered on your location.";
           return;
         }
-        if (!navigator.geolocation) {
-          status.textContent = "This browser does not provide location access.";
+        const policy = document.permissionsPolicy || document.featurePolicy;
+        if (policy?.allowsFeature?.("geolocation") === false || !navigator.geolocation) {
+          status.textContent = "Location access is unavailable here. Open the RF map directly in your browser.";
           return;
         }
         button.disabled = true;
         status.textContent = "Finding your location…";
-        navigator.geolocation.getCurrentPosition(
-          ({ coords }) => {
-            button.disabled = false;
-            if (!rememberLocation(coords.latitude, coords.longitude)) {
-              status.textContent = "The browser returned an invalid location.";
+        const messages = {
+          1: "Location access was blocked. Check site permissions and your device’s Location Services.",
+          2: "Your device couldn’t provide a position. Check Location Services or try the map in your regular browser.",
+          3: "Finding your location timed out. Check Location Services and try again.",
+        };
+        const found = ({ coords }) => {
+          button.disabled = false;
+          if (!rememberLocation(coords.latitude, coords.longitude)) {
+            status.textContent = "The browser returned an invalid location.";
+            return;
+          }
+          centerOnLocation();
+          status.textContent = "Centered on your location.";
+        };
+        const requestPosition = (retry) => {
+          navigator.geolocation.getCurrentPosition(found, ({ code }) => {
+            if (!retry && (code === 2 || code === 3)) {
+              status.textContent = "Still looking for your location. Trying again…";
+              requestPosition(true);
               return;
             }
-            centerOnLocation();
-            status.textContent = "Centered on your location.";
-          },
-          ({ code }) => {
             button.disabled = false;
-            status.textContent = code === 1
-              ? "Location access was denied. Allow it in your browser and try again."
-              : "Could not determine your location. Try again.";
-          },
-          { timeout: 10000 },
-        );
+            status.textContent = messages[code] || "Location lookup failed. Try again.";
+          }, retry
+            ? { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+            : { timeout: 8000, maximumAge: 30000 });
+        };
+        requestPosition(false);
       };
 
       function redraw() {
