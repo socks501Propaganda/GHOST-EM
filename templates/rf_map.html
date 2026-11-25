@@ -311,9 +311,7 @@
         ><input id="opacity" type="range" min="5" max="60" value="22" />
         <h2>OpenCellID import</h2>
         <div class="small">
-          Import a downloaded OpenCellID CSV containing lat, lon, mcc, mnc,
-          radio and optional cellid. This supplements mapped physical sites with
-          estimated cell locations.
+          Import an uncompressed OpenCellID CSV to display estimated cell locations.
         </div>
         <label>CSV file</label
         ><input id="file" type="file" accept=".csv,text/csv" /><button
@@ -322,6 +320,7 @@
         >
           Clear imported cells
         </button>
+        <button class="secondary" id="fitCells" disabled>Fit imported cells</button>
         <h2>Survey locations</h2>
         <button class="secondary" id="add">
           Add survey marker at map center</button
@@ -340,7 +339,9 @@
         </div>
         <p class="small">
           Infrastructure: Homeland Infrastructure Foundation-Level Data (U.S. tower layer) and © OpenStreetMap contributors, ODbL · Cell records: ©
-          OpenCellID contributors, CC BY-SA 4.0 (when imported). Basemap ©
+          <a href="https://opencellid.org/">OpenCellID contributors</a>,
+          <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>
+          (when imported). Basemap ©
           OpenStreetMap contributors. Map tiles and Overpass requests require
           internet access.
         </p>
@@ -641,51 +642,75 @@ L.circleMarker([latitude, longitude], {
           out.push(part);
           return out;
         }
-        let headers = split(lines.shift()).map((x) => x.trim().toLowerCase());
-        let ix = (n) => headers.indexOf(n);
-        if (ix("lat") < 0 || ix("lon") < 0)
-          throw Error("CSV requires lat and lon columns");
-        return lines
-          .map((line) => {
-            let x = split(line);
-            return {
-              lat: Number(x[ix("lat")]),
-              lon: Number(x[ix("lon")]),
-              mcc: ix("mcc") >= 0 ? x[ix("mcc")] : "",
-              mnc: ix("mnc") >= 0 ? x[ix("mnc")] : "",
-              radio: ix("radio") >= 0 ? x[ix("radio")] : "",
-              cellid: ix("cellid") >= 0 ? x[ix("cellid")] : "",
-            };
-          })
-          .filter(
-            (c) =>
-              Number.isFinite(c.lat) &&
-              Number.isFinite(c.lon) &&
-              c.lat >= 42.15 &&
-              c.lat <= 42.64 &&
-              c.lon >= -77.13 &&
-              c.lon <= -76.35,
-          );
+        const first = split(lines[0]).map((value) => value.trim());
+        let headers = first.map((value) => value.toLowerCase());
+        const hasHeader = headers.includes("lat") && headers.includes("lon");
+        if (hasHeader) {
+          lines.shift();
+        } else if (first.length === 14 && /^[A-Z][A-Z0-9]{1,7}$/i.test(first[0]) &&
+                   /^\d{3}$/.test(first[1])) {
+          headers = ["radio", "mcc", "net", "area", "cell", "unit", "lon", "lat"];
+        } else {
+          throw Error("Use an OpenCellID export or a CSV with lat and lon columns.");
+        }
+
+        const latIndex = headers.indexOf("lat");
+        const lonIndex = headers.indexOf("lon");
+        const mccIndex = headers.indexOf("mcc");
+        const mncIndex = headers.indexOf(headers.includes("mnc") ? "mnc" : "net");
+        const radioIndex = headers.indexOf("radio");
+        const cellIndex = headers.indexOf(headers.includes("cellid") ? "cellid" : "cell");
+        const records = [];
+        for (const line of lines) {
+          const row = split(line);
+          const latitude = row[latIndex]?.trim();
+          const longitude = row[lonIndex]?.trim();
+          if (!latitude || !longitude) continue;
+          const lat = Number(latitude);
+          const lon = Number(longitude);
+          if (!(lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180)) continue;
+          records.push({
+            lat,
+            lon,
+            mcc: row[mccIndex]?.trim() ?? "",
+            mnc: row[mncIndex]?.trim() ?? "",
+            radio: row[radioIndex]?.trim() ?? "",
+            cellid: row[cellIndex]?.trim() ?? "",
+          });
+        }
+        return records;
       }
       $("file").onchange = async (e) => {
-        let f = e.target.files?.[0];
+        const f = e.target.files?.[0];
         if (!f) return;
         try {
-          cells = parseCSV(await f.text());
+          const records = parseCSV(await f.text());
+          if (e.target.files?.[0] !== f) return;
+          if (!records.length) throw Error("No rows with valid coordinates.");
+          cells = records;
+          $("fitCells").disabled = false;
           redraw();
           $("status").textContent =
             "Imported " +
             cells.length +
-            " regional cell records from " +
+            " cell records from " +
             f.name;
         } catch (err) {
+          if (e.target.files?.[0] !== f) return;
           $("status").textContent = "Import error: " + err.message;
         }
       };
       $("clear").onclick = () => {
         cells = [];
         $("file").value = "";
+        $("fitCells").disabled = true;
         redraw();
+      };
+      $("fitCells").onclick = () => {
+        if (!cells.length) return;
+        const bounds = L.latLngBounds();
+        for (const cell of cells) bounds.extend([cell.lat, cell.lon]);
+        map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
       };
       map.on("click", (e) => {
         $("status").textContent =
