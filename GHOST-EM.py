@@ -7,6 +7,7 @@ import os
 import hashlib
 import hmac
 import json
+import logging
 import time
 import secrets
 import signal
@@ -50,6 +51,7 @@ if not settings.configured:
             "django.contrib.sessions.middleware.SessionMiddleware",
             "django.middleware.csrf.CsrfViewMiddleware",
             "django.contrib.auth.middleware.AuthenticationMiddleware",
+            "django.middleware.clickjacking.XFrameOptionsMiddleware",
         ],
         INSTALLED_APPS=[
             "django.contrib.auth",
@@ -80,6 +82,7 @@ if not settings.configured:
         CSRF_COOKIE_SECURE=True,
         CSRF_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_AGE=3600,
+        X_FRAME_OPTIONS="DENY",
         AUTH_PASSWORD_VALIDATORS=[
             {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
             {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -253,6 +256,7 @@ from django.views.decorators.http import require_http_methods
 from django.utils.html import escape
 
 
+@never_cache
 @require_http_methods(["GET", "POST"])
 @protect_login("admin_login")
 @ensure_csrf_cookie
@@ -304,6 +308,7 @@ from django.db import connection
 from django.utils.html import escape
 
 
+@never_cache
 @user_passes_test(
     lambda user: user.is_authenticated and user.is_superuser,
     login_url="/dashboard/login/",
@@ -343,6 +348,13 @@ from django.db import transaction
 from django.utils import timezone as django_timezone
 
 
+def revoke_account_sessions(account_id):
+    sessions = Session.objects.filter(expire_date__gt=django_timezone.now())
+    for session in sessions.iterator():
+        if session.get_decoded().get(SESSION_KEY) == str(account_id):
+            session.delete()
+
+
 @never_cache
 @user_passes_test(
     lambda user: user.is_authenticated and user.is_superuser,
@@ -368,10 +380,7 @@ def dashboard_accounts(request):
                 if not accounts.filter(pk=int(account_id)).update(is_active=action == "enable"):
                     return HttpResponse("Account not found.", status=404)
                 if action == "disable":
-                    sessions = Session.objects.filter(expire_date__gt=django_timezone.now())
-                    for session in sessions.iterator():
-                        if session.get_decoded().get(SESSION_KEY) == str(int(account_id)):
-                            session.delete()
+                    revoke_account_sessions(int(account_id))
             return redirect("dashboard_accounts")
         else:
             return HttpResponse("Invalid account action.", status=400)
@@ -380,6 +389,46 @@ def dashboard_accounts(request):
         request, "dashboard_accounts.html",
         {"form": form, "accounts": accounts.order_by("username")},
     )
+
+
+@never_cache
+@user_passes_test(
+    lambda user: user.is_authenticated and user.is_superuser,
+    login_url="/dashboard/login/",
+)
+@require_http_methods(["GET", "POST"])
+@csrf_protect
+def promote_account(request, account_id):
+    candidates = get_user_model().objects.filter(
+        pk=account_id, is_active=True, is_staff=False, is_superuser=False,
+    )
+    account = candidates.first()
+    if account is None:
+        return HttpResponse("Active member account not found.", status=404)
+
+    error = ""
+    if request.method == "POST":
+        if count_request("admin-promotion:", str(request.user.pk)) > 5:
+            return HttpResponse(
+                "Too many confirmation attempts. Try again in a minute.",
+                status=429,
+                headers={"Retry-After": "60"},
+            )
+        password = request.POST.get("password", "")
+        if not request.user.check_password(password):
+            error = "The administrator password was incorrect."
+        else:
+            with transaction.atomic():
+                if not candidates.update(is_staff=True, is_superuser=True):
+                    return HttpResponse("Active member account not found.", status=404)
+                revoke_account_sessions(account_id)
+            logging.getLogger(__name__).warning(
+                "Administrator access granted: actor_id=%s account_id=%s",
+                request.user.pk, account_id,
+            )
+            return redirect("dashboard_accounts")
+
+    return render(request, "promote_account.html", {"account": account, "error": error})
 
 
 urlpatterns = [
@@ -399,6 +448,7 @@ urlpatterns = [
     path("rf-map/", rf_map),
     path("dashboard/login/", dashboard_login),
     path("dashboard/accounts/", dashboard_accounts, name="dashboard_accounts"),
+    path("dashboard/accounts/<int:account_id>/promote/", promote_account, name="promote_account"),
     path("dashboard/", dashboard),
 ]
 

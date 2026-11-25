@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Confirm administrator access | GHOST-EM</title>
+    <style>
+      body { color-scheme: dark; background: #130d20; color: #f4eaff; font: 1rem system-ui; margin: 2rem auto; max-width: 36rem; padding: 0 1rem; }
+      a { color: #dfbbff; }
+      label { display: block; margin-bottom: .3rem; }
+      button, input { font: inherit; padding: .45rem .65rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Make {{ account.username }} an administrator</h1>
+      <p>This grants full dashboard access, including location submissions, member accounts, and the ability to make other administrators. The member must sign in again.</p>
+      {% if error %}<p role="alert">{{ error }}</p>{% endif %}
+      <form method="post">
+        {% csrf_token %}
+        <label for="password">Your administrator password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Grant administrator access</button>
+        <a href="{% url 'dashboard_accounts' %}">Cancel</a>
+      </form>
+    </main>
+  </body>
+</html>
