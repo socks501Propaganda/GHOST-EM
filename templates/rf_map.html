@@ -660,8 +660,12 @@
       }
 
       function towerDescriptions(site) {
-        const title = "<b>" + safe(towerName(site)) + "</b>";
+        const displayName = towerName(site);
+        const title = "<b>" + safe(displayName) + "</b>";
+        const publishedName = towerText(site.name);
+        const record = safe(site.source) + " record " + safe(site.id);
         const fields = [
+          ["Published name", publishedName === displayName ? "" : publishedName],
           ["Type", site.structure || (site.cellular ? "Cellular site" : "Communications site")],
           ["Licensee", site.licensee],
           ["Operator", site.operator],
@@ -671,12 +675,12 @@
         const details = fields.filter(([, value]) => value)
           .map(([label, value]) => safe(label) + ": " + safe(value));
         return {
-          hover: [title, ...details].join("<br>"),
+          hover: [title, ...details, record].join("<br>"),
           popup: [
             title, ...details,
             ...(site.callSign ? ["FCC call sign: " + safe(site.callSign)] : []),
             ...(site.registration ? ["Tower registration: " + safe(site.registration)] : []),
-            safe(site.source) + " record " + safe(site.id),
+            record,
           ].join("<br>"),
         };
       }
