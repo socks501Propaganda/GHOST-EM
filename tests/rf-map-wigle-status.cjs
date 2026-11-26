@@ -33,7 +33,7 @@ test("WiGLE status follows visibility, display mode, and clearing", async () => 
   const csv = "SSID,CurrentLatitude,CurrentLongitude,Type\nTest network,42,-76,WIFI";
   fileInput.files = [{ text: async () => csv }];
   await fileInput.onchange({ target: fileInput });
-  assert.match(controls.wigleStatus.textContent, /grid areas/);
+  assert.match(controls.wigleStatus.textContent, /reception areas/);
 
   controls.wigleLayer.checked = false;
   handlers.wigleLayer();

@@ -470,11 +470,11 @@
           <h2>Public Wi-Fi and WiGLE</h2>
           <p class="small">Public Wi-Fi shows a one-time <a href="https://data.cityofnewyork.us/d/yjub-udmw">NYC Open Data</a> snapshot for the five boroughs and <a href="https://nysl.nysed.gov/find-your-public-library?field_wifi247_value=1">New York State Library listings</a> for libraries reporting 24/7 Wi-Fi elsewhere in the state. Availability may have changed since the source was published.</p>
           <p class="small" id="publicWifiStatus" role="status">Turn on Public Wi-Fi and zoom in to see hotspot locations.</p>
-          <p class="small">Import a WiGLE CSV you have permission to use. Choose density or reception pins. Files selected here stay in your browser.</p>
+          <p class="small">Import a WiGLE CSV you have permission to use. Tap a reception circle for SSID and BSSID. Its position is where the signal was recorded. Files selected here stay in your browser.</p>
           <label for="wigleMode">WiGLE display</label>
           <select id="wigleMode">
-            <option value="density">Observation density</option>
             <option value="pins">Reception locations</option>
+            <option value="density">Observation density</option>
           </select>
           <label for="wigleFile">WiGLE CSV file</label>
           <input id="wigleFile" type="file" accept=".csv,text/csv" />
@@ -1138,14 +1138,20 @@
 
       function wigleDensity(observations) {
         const grid = new Map();
-        for (const { lat, lon } of observations) {
+        for (const observation of observations) {
+          const { lat, lon } = observation;
           const y = Math.floor(lat * 100);
           const x = Math.floor(lon * 100);
           const key = y + "," + x;
-          if (!grid.has(key)) grid.set(key, { y, x, count: 0 });
-          grid.get(key).count++;
+          if (!grid.has(key)) grid.set(key, { latitudeSum: 0, longitudeSum: 0, rows: [] });
+          const bucket = grid.get(key);
+          bucket.latitudeSum += lat;
+          bucket.longitudeSum += lon;
+          bucket.rows.push(observation);
         }
-        return [...grid.values()];
+        return [...grid.values()].map(({ latitudeSum, longitudeSum, rows }) => ({
+          lat: latitudeSum / rows.length, lon: longitudeSum / rows.length, rows,
+        }));
       }
 
       let wigleObservations = [];
@@ -1222,6 +1228,25 @@
         if (pendingSurveySync.length) void updateSurveySync("POST");
       }
 
+      function addWifiCircle(lat, lon, observations, heading) {
+        const entries = observations.map(({ details }) => {
+          const label = details.find(([name]) => name === "SSID")?.[1] ||
+            details.find(([name]) => name === "BSSID")?.[1] || "Wi-Fi observation";
+          const metadata = details.filter(([name]) => name !== "SSID")
+            .map(([name, value]) => safe(name) + ": " + safe(value)).join("<br>");
+          return "<strong>SSID: " + safe(label) + "</strong>" + (metadata ? "<br>" + metadata : "");
+        });
+        const count = observations.length;
+        const ssid = observations[0].details.find(([name]) => name === "SSID")?.[1];
+        const bssid = observations[0].details.find(([name]) => name === "BSSID")?.[1];
+        const label = count === 1 ? ssid || bssid || "Wi-Fi observation" : count + " Wi-Fi observations";
+        L.circleMarker([lat, lon], {
+          radius: Math.min(8, 4 + Math.log2(count)),
+          color: "#ad91ff", weight: 1, opacity: .75, fillColor: "#9271eb", fillOpacity: .38,
+        }).bindTooltip(safe(label)).bindPopup("<strong>" + heading + "</strong><br>" + lat + ", " + lon +
+          "<br>" + entries.join("<hr>")).addTo(wigle);
+      }
+
       function drawWiglePins() {
         if ($("wigleMode").value !== "pins" || !$("wigleLayer").checked || !wigleObservations.length) return;
         wigle.clearLayers();
@@ -1242,20 +1267,7 @@
         for (const observations of locations.values()) {
           if (shown++ === 2000) break;
           const { lat, lon } = observations[0];
-          const entries = observations.map(({ details }) => {
-            const label = details.find(([name]) => name === "SSID")?.[1] ||
-              details.find(([name]) => name === "BSSID")?.[1] || "Wi-Fi observation";
-            const metadata = details.filter(([name]) => name !== "SSID")
-              .map(([name, value]) => safe(name) + ": " + safe(value)).join("<br>");
-            return "<strong>" + safe(label) + "</strong>" + (metadata ? "<br>" + metadata : "");
-          });
-          const label = observations.length === 1
-            ? "1 Wi-Fi observation" : observations.length + " Wi-Fi observations";
-          L.circleMarker([lat, lon], {
-            radius: observations.length === 1 ? 5 : 9,
-            color: "#17374b", weight: 1, fillColor: "#62dfb9", fillOpacity: .9,
-          }).bindTooltip(label).bindPopup("<strong>Reception location</strong><br>" + lat + ", " + lon +
-            "<br>" + entries.join("<hr>")).addTo(wigle);
+          addWifiCircle(lat, lon, observations, "Reception location");
         }
         $("wigleStatus").textContent = locations.size > 2000
           ? "Showing 2,000 reception locations. Zoom in for more detail."
@@ -1279,16 +1291,11 @@
           return;
         }
         const areas = wigleDensity(wigleObservations);
-        for (const { y, x, count } of areas) {
-          const square = L.latLngBounds([y / 100, x / 100], [(y + 1) / 100, (x + 1) / 100]);
-          bounds.extend(square);
-          L.rectangle(square, {
-            color: "#62dfb9",
-            weight: 1,
-            fillOpacity: Math.min(.68, .16 + Math.log2(count) * .095),
-          }).bindTooltip(count + (count === 1 ? " Wi-Fi observation" : " Wi-Fi observations")).addTo(wigle);
+        for (const { lat, lon, rows } of areas) {
+          bounds.extend([lat, lon]);
+          addWifiCircle(lat, lon, rows, "Reception area");
         }
-        $("wigleStatus").textContent = wigleObservations.length + " observations across " + areas.length + " grid areas.";
+        $("wigleStatus").textContent = wigleObservations.length + " observations across " + areas.length + " reception areas.";
         if (fit) map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
       }
 
