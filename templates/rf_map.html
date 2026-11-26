@@ -376,6 +376,12 @@
     <header class="brand-bar">
       <h1>WE$-GHO$T</h1>
       <p>Mapping the Invisible</p>
+      {% if survey_owner %}
+        <form method="post" action="{% url 'rf_map_sign_out' %}">
+          {% csrf_token %}
+          <button type="submit">Sign out</button>
+        </form>
+      {% endif %}
     </header>
     <main>
       <div class="map-layout">

@@ -600,6 +600,7 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(next_page="login"), name="logout"),
     path("submit", submit),
     path("rf-map/", rf_map),
+    path("rf-map/sign-out/", LogoutView.as_view(next_page="/login/?next=/rf-map/"), name="rf_map_sign_out"),
     path("rf-map/address-search/", login_required(search_address), name="rf_address_search"),
     path("rf-map/public-wifi/", login_required(public_wifi_snapshot)),
     path("rf-map/cbrs/protection-areas/", login_required(cbrs_protection_areas)),
