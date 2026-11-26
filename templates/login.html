@@ -28,6 +28,9 @@
         {% endif %}
         <button type="submit">Sign in</button>
       </form>
+      {% if next == "/rf-map/" %}
+        <p><a href="{% url 'guest_rf_map' %}">Continue as guest</a></p>
+      {% endif %}
     </main>
   </body>
 </html>

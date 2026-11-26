@@ -8,11 +8,14 @@ const html = fs.readFileSync(path.join(__dirname, "../templates/rf_map.html"), "
 const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
 new vm.Script(script);
 const locationCode = script.slice(script.indexOf("let myLocation"), script.indexOf("function redraw"));
+const landing = fs.readFileSync(path.join(__dirname, "../templates/new public ghostem.html"), "utf8");
+const landingCode = landing.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
 
-function setup({ saved = null, allowed = true, geolocation = true } = {}) {
+function setup({ saved = null, owner = "1", allowed = true, geolocation = true } = {}) {
   const controls = {};
   const positions = [];
   const requests = [];
+  const removed = [];
   const marker = { addTo() { return this; }, bindPopup() { return this; }, setLatLng() {} };
   const browser = geolocation
     ? { getCurrentPosition: (success, fail, options) => requests.push({ success, fail, options }) }
@@ -20,20 +23,55 @@ function setup({ saved = null, allowed = true, geolocation = true } = {}) {
 
   vm.runInNewContext(locationCode, {
     $: (id) => controls[id] ??= {},
-    document: { permissionsPolicy: { allowsFeature: () => allowed } },
+    document: {
+      body: { dataset: { surveyOwner: owner } },
+      permissionsPolicy: { allowsFeature: () => allowed },
+    },
     navigator: { geolocation: browser },
     L: { circleMarker: () => marker },
     map: { getZoom: () => 15, setView: (point, zoom) => positions.push([Array.from(point), zoom]) },
-    sessionStorage: { getItem: () => saved, removeItem() {} },
+    sessionStorage: { getItem: () => saved, removeItem: (key) => removed.push(key) },
   });
-  return { click: controls.myLocation.onclick, controls, positions, requests };
+  return { click: controls.myLocation.onclick, controls, positions, requests, removed };
 }
 
-test("returns to the location shared on the landing page", () => {
-  const app = setup({ saved: '{"latitude":42,"longitude":-76}' });
+test("returns to the location shared on the landing page by the same account", async () => {
+  const controls = {};
+  const storage = new Map();
+  const window = { location: {} };
+  let reportPosition;
+  vm.runInNewContext(landingCode, {
+    document: {
+      body: { dataset: { surveyOwner: "1" } },
+      cookie: "",
+      getElementById: (id) => controls[id] ??= {},
+    },
+    fetch: async () => ({ ok: true }),
+    navigator: { geolocation: { getCurrentPosition: (success) => { reportPosition = success; } } },
+    sessionStorage: { setItem: (key, value) => storage.set(key, value) },
+    window,
+  });
+  controls.share.onclick();
+  await reportPosition({ coords: { latitude: 42, longitude: -76 } });
+  assert.equal(window.location.href, "/rf-map/");
+  const app = setup({ saved: storage.get("ghostem_location") });
   app.click();
   assert.deepEqual(app.positions, [[[42, -76], 15], [[42, -76], 15]]);
   assert.equal(app.requests.length, 0);
+  assert.deepEqual(app.removed, ["ghostem_location"]);
+});
+
+test("discards another account’s location and legacy locations without an owner", () => {
+  for (const saved of [
+    '{"owner":"2","latitude":42,"longitude":-76}',
+    '{"latitude":42,"longitude":-76}',
+  ]) {
+    const app = setup({ saved });
+    assert.deepEqual(app.positions, []);
+    assert.deepEqual(app.removed, ["ghostem_location"]);
+    app.click();
+    assert.equal(app.requests.length, 1);
+  }
 });
 
 test("retries a timeout once and reuses the successful position", () => {

@@ -132,7 +132,7 @@ body {
 }
     </style>
   </head>
-  <body>
+  <body data-survey-owner="{{ survey_owner }}">
     <h1 class="ghost-title">WE$-GH0$T</h1>
     <h5 class="subtitle">Geospatial RF Intelligence and Electromagnetic Spectrum Analysis Platform</h5>
 <p class="subtitle">Mapping the Invisible Spectrum</p>
@@ -173,20 +173,19 @@ body {
                 }),
               });
               if (!resp.ok) throw Error("Server returned " + resp.status);
-              const latitude = pos.coords.latitude;
-const longitude = pos.coords.longitude;
-
-sessionStorage.setItem(
-  "ghostem_location",
-  JSON.stringify({ latitude, longitude })
-);
-
-window.location.href = "/rf-map/";
-              status.textContent =
-                "Location set, We$-Gho$t will be informed. Latitude: " +
-                pos.coords.latitude +
-                "; Longitude: " +
-                pos.coords.longitude;
+              const owner = document.body.dataset.surveyOwner;
+              const { latitude, longitude } = pos.coords;
+              if (owner) {
+                try {
+                  sessionStorage.setItem(
+                    "ghostem_location",
+                    JSON.stringify({ owner, latitude, longitude }),
+                  );
+                } catch {
+                  // The map can request the location again if storage is disabled.
+                }
+              }
+              window.location.href = "/rf-map/";
             } catch (e) {
               status.textContent = "Unable to share location: " + e.message;
             }

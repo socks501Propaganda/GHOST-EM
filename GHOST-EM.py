@@ -31,7 +31,7 @@ from django.middleware.csrf import get_token
 from django.urls import path
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_safe
 
 ##imported from GHOST IN THE SSH
 
@@ -120,10 +120,11 @@ document.getElementById('share').onclick=()=>{
 </script></body></html>"""
 
 
+@never_cache
 @ensure_csrf_cookie
 @login_required
 def index(request):
-    return render(request, "new public ghostem.html")
+    return render(request, "new public ghostem.html", {"survey_owner": request.user.pk})
 
 @never_cache
 @login_required
@@ -131,7 +132,13 @@ def rf_map(request):
     return render(request, "rf_map.html", {"survey_owner": request.user.pk})
 
 
-@login_required
+@never_cache
+@require_safe
+def guest_rf_map(request):
+    return render(request, "rf_map.html", {"guest": True})
+
+
+@require_safe
 def cbrs_protection_areas(request):
     dataset = Path(__file__).resolve().parent / "data" / "ntia-dpas.geojson.gz"
     response = FileResponse(dataset.open("rb"), content_type="application/geo+json")
@@ -140,7 +147,7 @@ def cbrs_protection_areas(request):
     return response
 
 
-@login_required
+@require_safe
 def public_wifi_snapshot(request):
     dataset = Path(__file__).resolve().parent / "data" / "ny-public-wifi.json.gz"
     response = FileResponse(dataset.open("rb"), content_type="application/json")
@@ -240,14 +247,22 @@ def photon_matches(query):
 
 
 @never_cache
-@login_required
 @require_http_methods(["POST"])
 @csrf_protect
-def search_address(request):
+def search_address(request, guest=False):
     query = " ".join(request.POST.get("address", "").split())
     if not 2 <= len(query) <= 250:
         return JsonResponse({"error": "Enter a city, business name, or address."}, status=400)
-    if count_request("address-search:", str(request.user.pk)) > 15:
+    if guest:
+        try:
+            subject = str(ipaddress.ip_address(request.META.get("REMOTE_ADDR", "")))
+        except ValueError:
+            return JsonResponse({"error": "Map search is unavailable."}, status=400)
+        scope = "guest-address-search:"
+    else:
+        subject = str(request.user.pk)
+        scope = "address-search:"
+    if count_request(scope, subject) > 15:
         return JsonResponse(
             {"error": "Too many searches. Try again in a minute."}, status=429,
             headers={"Retry-After": "60"},
@@ -585,9 +600,13 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(next_page="login"), name="logout"),
     path("submit", submit),
     path("rf-map/", rf_map),
-    path("rf-map/address-search/", search_address, name="rf_address_search"),
-    path("rf-map/public-wifi/", public_wifi_snapshot),
-    path("rf-map/cbrs/protection-areas/", cbrs_protection_areas),
+    path("rf-map/address-search/", login_required(search_address), name="rf_address_search"),
+    path("rf-map/public-wifi/", login_required(public_wifi_snapshot)),
+    path("rf-map/cbrs/protection-areas/", login_required(cbrs_protection_areas)),
+    path("rf-map/guest/", guest_rf_map, name="guest_rf_map"),
+    path("rf-map/guest/address-search/", search_address, {"guest": True}, name="guest_rf_address_search"),
+    path("rf-map/guest/public-wifi/", public_wifi_snapshot),
+    path("rf-map/guest/cbrs/protection-areas/", cbrs_protection_areas),
     path("dashboard/login/", dashboard_login),
     path("dashboard/accounts/", dashboard_accounts, name="dashboard_accounts"),
     path("dashboard/accounts/<int:account_id>/promote/", promote_account, name="promote_account"),

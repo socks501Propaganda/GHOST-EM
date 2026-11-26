@@ -372,7 +372,7 @@
       }
     </style>
   </head>
-  <body data-survey-owner="{{ survey_owner }}">
+  <body data-survey-owner="{{ survey_owner|default_if_none:'' }}"{% if guest %} data-guest{% endif %}>
     <header class="brand-bar">
       <h1>WE$-GHO$T</h1>
       <p>Mapping the Invisible</p>
@@ -399,7 +399,7 @@
             <button id="searchToggle" class="map-icon" type="button" aria-label="Search the map" aria-expanded="false" aria-controls="addressPanel" title="Search the map"></button>
             <button id="myLocation" class="map-icon" type="button" aria-label="Back to my location" aria-describedby="locationStatus" title="Back to my location"></button>
             <div id="addressPanel" hidden>
-              <form id="addressSearch" method="post" action="{% url 'rf_address_search' %}">
+              <form id="addressSearch" method="post" action="{% if guest %}{% url 'guest_rf_address_search' %}{% else %}{% url 'rf_address_search' %}{% endif %}">
                 {% csrf_token %}
                 <label for="addressQuery">City, business, or address</label>
                 <div class="address-fields">
@@ -575,11 +575,13 @@
       }
 
       try {
-        const savedLocation = sessionStorage.getItem("ghostem_location");
-        sessionStorage.removeItem("ghostem_location");
+        const savedLocation = document.body.dataset.guest === undefined
+          ? sessionStorage.getItem("ghostem_location") : null;
+        if (savedLocation !== null) sessionStorage.removeItem("ghostem_location");
         if (savedLocation) {
-          const { latitude, longitude } = JSON.parse(savedLocation);
-          if (rememberLocation(latitude, longitude)) centerOnLocation();
+          const { owner, latitude, longitude } = JSON.parse(savedLocation);
+          if (owner && owner === document.body.dataset.surveyOwner &&
+              rememberLocation(latitude, longitude)) centerOnLocation();
         }
       } catch {
         // A fresh location can still be requested from the button.
@@ -758,18 +760,19 @@
       }
       const layerIds = ["sites", "heat", "cells", "publicWifiLayer", "wigleLayer", "surveyLayer", "federalCbrs", "fssCbrs", "legacyCbrs"];
       const layerSettingsKey = "ghostem.rf-map.layers";
+      const layerStorage = document.body.dataset.guest === undefined ? "localStorage" : "sessionStorage";
 
       function saveLayerSettings() {
         try {
           const settings = Object.fromEntries(layerIds.map((id) => [id, $(id).checked]));
-          localStorage.setItem(layerSettingsKey, JSON.stringify(settings));
+          window[layerStorage].setItem(layerSettingsKey, JSON.stringify(settings));
         } catch {
           // Layer controls still work when browser storage is unavailable.
         }
       }
 
       try {
-        const settings = JSON.parse(localStorage.getItem(layerSettingsKey));
+        const settings = JSON.parse(window[layerStorage].getItem(layerSettingsKey));
         for (const id of layerIds) {
           if (typeof settings?.[id] === "boolean") $(id).checked = settings[id];
         }
@@ -1162,11 +1165,14 @@
       }
 
       map.on("moveend", drawWiglePins);
-      $("wigleLayer").addEventListener("change", drawWiglePins);
 
       function renderWigleImport(fit) {
         if (!wigleObservations.length) return;
         wigle.clearLayers();
+        if (!$("wigleLayer").checked) {
+          $("wigleStatus").textContent = "Turn on WiGLE observations to see the imported file.";
+          return;
+        }
         const bounds = L.latLngBounds();
         if ($("wigleMode").value === "pins") {
           for (const { lat, lon } of wigleObservations) bounds.extend([lat, lon]);
@@ -1188,10 +1194,9 @@
         if (fit) map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
       }
 
-      $("wigleMode").addEventListener("change", () => {
-        if (!$("wigleLayer").checked) $("wigleStatus").textContent = "Turn on WiGLE observations to see the imported file.";
-        renderWigleImport(false);
-      });
+      for (const id of ["wigleLayer", "wigleMode"]) {
+        $(id).addEventListener("change", () => renderWigleImport(false));
+      }
 
       $("wigleFile").onchange = async (event) => {
         const input = event.target;
@@ -1227,11 +1232,14 @@
           e.latlng.lng.toFixed(6);
       });
       const surveyOwner = document.body.dataset.surveyOwner;
-      const waypointKey = surveyOwner ? "ghostem.rf-map.waypoints." + surveyOwner : null;
+      const guestMap = document.body.dataset.guest !== undefined;
+      const waypointStorage = guestMap ? "sessionStorage" : "localStorage";
+      const waypointKey = guestMap ? "ghostem.rf-map.waypoints.guest"
+        : surveyOwner ? "ghostem.rf-map.waypoints." + surveyOwner : null;
       const waypoints = [];
       if (waypointKey) {
         try {
-          const saved = JSON.parse(localStorage.getItem(waypointKey));
+          const saved = JSON.parse(window[waypointStorage].getItem(waypointKey));
           if (Array.isArray(saved)) {
             for (const item of saved) {
               if (typeof item?.label === "string" &&
@@ -1249,7 +1257,7 @@
 
       function saveWaypoints(message) {
         try {
-          if (waypointKey) localStorage.setItem(waypointKey, JSON.stringify(waypoints));
+          if (waypointKey) window[waypointStorage].setItem(waypointKey, JSON.stringify(waypoints));
           else throw Error("No browser storage key");
         } catch {
           message += " Browser storage is unavailable. Export the CSV to keep a copy.";
