@@ -207,6 +207,25 @@
         width: 100%;
         background: #090612;
       }
+      .wifi-details {
+        position: absolute;
+        z-index: 900;
+        inset-inline: 12px;
+        bottom: 24px;
+        max-width: 28rem;
+        max-height: 43%;
+        overflow: auto;
+        overscroll-behavior: contain;
+        padding: 12px;
+        border: 1px solid #a88de8;
+        border-radius: 10px;
+        background: #181125;
+        color: #f4eaff;
+      }
+      .wifi-details h2 { margin: 0; font-size: 1rem; }
+      .wifi-details header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .wifi-details button { min-height: 44px; margin: 0; }
+      .wifi-details hr { border: 0; border-top: 1px solid #58466d; }
       .mapwrap {
         position: relative;
         min-width: 0;
@@ -401,6 +420,13 @@
         </aside>
         <div class="mapwrap">
           <div id="map" aria-label="RF survey map"></div>
+          <section class="wifi-details" id="wifiDetails" aria-labelledby="wifiDetailsHeading" hidden>
+            <header>
+              <h2 id="wifiDetailsHeading">Wi-Fi observation details</h2>
+              <button type="button" class="secondary" id="closeWifiDetails">Close</button>
+            </header>
+            <div id="wifiDetailsContent"></div>
+          </section>
           <div class="map-search">
             <button id="searchToggle" class="map-icon" type="button" aria-label="Search the map" aria-expanded="false" aria-controls="addressPanel" title="Search the map"></button>
             <button id="myLocation" class="map-icon" type="button" aria-label="Back to my location" aria-describedby="locationStatus" title="Back to my location"></button>
@@ -1209,14 +1235,13 @@
           const rows = await requestSurveySync(method, method === "POST" ? queued : undefined);
           const changed = JSON.stringify(rows) !== JSON.stringify(syncedWigleRows);
           syncedWigleRows = rows;
-          if (method === "POST" && pendingSurveySync === batch) pendingSurveySync = [];
-          if (method === "DELETE") pendingSurveySync = [];
+          if (method !== "GET" && pendingSurveySync === queued) pendingSurveySync = [];
           if (changed) refreshWigleRows(method === "GET" && !localWigleRows.length && !wigle.getLayers().length);
           $("deleteSyncedSurvey").hidden = !rows.length;
           syncStatus.textContent = pendingSurveySync.length
             ? "Some observations are waiting to sync."
             : rows.length + " observations synced to this account.";
-        } catch {
+        } catch (error) {
           syncStatus.textContent = method === "POST"
             ? "Plotted on this device. Sync failed. " + (error.message || "Retry when online and signed in.")
             : "Could not " + (method === "DELETE" ? "delete" : "load") + " synced observations.";
@@ -1243,8 +1268,12 @@
         L.circleMarker([lat, lon], {
           radius: Math.min(8, 4 + Math.log2(count)),
           color: "#ad91ff", weight: 1, opacity: .75, fillColor: "#9271eb", fillOpacity: .38,
-        }).bindTooltip(safe(label)).bindPopup("<strong>" + heading + "</strong><br>" + lat + ", " + lon +
-          "<br>" + entries.join("<hr>")).addTo(wigle);
+          bubblingMouseEvents: false,
+        }).bindTooltip(safe(label)).on("click", () => {
+          $("wifiDetailsContent").innerHTML = "<strong>" + heading + "</strong><br>" +
+            lat + ", " + lon + "<br>" + entries.join("<hr>");
+          $("wifiDetails").hidden = false;
+        }).addTo(wigle);
       }
 
       function drawWiglePins() {
@@ -1274,6 +1303,8 @@
           : locations.size + " Wi-Fi reception locations in view.";
       }
 
+      const closeWifiDetails = () => { $("wifiDetails").hidden = true; };
+      $("closeWifiDetails").onclick = closeWifiDetails;
       map.on("moveend", drawWiglePins);
 
       function renderWigleImport(fit) {
@@ -1300,10 +1331,14 @@
       }
 
       for (const id of ["wigleLayer", "wigleMode"]) {
-        $(id).addEventListener("change", () => renderWigleImport(false));
+        $(id).addEventListener("change", () => {
+          closeWifiDetails();
+          renderWigleImport(false);
+        });
       }
 
       function importWigleCsv(csvText) {
+        closeWifiDetails();
         const observations = parseWigleCSV(csvText);
         if (!observations.length) throw Error("No Wi-Fi observations with valid coordinates.");
         localWigleRows = observations;
@@ -1338,6 +1373,7 @@
         }
       };
       $("clearWigle").onclick = () => {
+        closeWifiDetails();
         localWigleRows = [];
         $("wigleFile").value = "";
         refreshWigleRows(false);
@@ -1353,6 +1389,7 @@
         }, 15000);
       }
       map.on("click", (e) => {
+        closeWifiDetails();
         $("status").textContent =
           "Selected " +
           e.latlng.lat.toFixed(6) +

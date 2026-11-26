@@ -591,7 +591,7 @@ def promote_account(request, account_id):
     return render(request, "promote_account.html", {"account": account, "error": error})
 
 
-from rf_surveys.views import survey_map
+from rf_surveys.views import survey_map, survey_uplink
 
 urlpatterns = [
     path("", index),
@@ -609,6 +609,7 @@ urlpatterns = [
     path("submit", submit),
     path("rf-map/", rf_map),
     path("rf-map/synced-survey/", survey_map),
+    path("rf-map/survey-uplink/", survey_uplink),
     path("rf-map/sign-out/", LogoutView.as_view(next_page="/login/?next=/rf-map/"), name="rf_map_sign_out"),
     path("rf-map/address-search/", login_required(search_address), name="rf_address_search"),
     path("rf-map/public-wifi/", login_required(public_wifi_snapshot)),

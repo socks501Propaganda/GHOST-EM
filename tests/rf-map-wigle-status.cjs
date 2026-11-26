@@ -15,8 +15,8 @@ test("WiGLE status follows visibility, display mode, and clearing", async () => 
     control.addEventListener = (event, callback) => { handlers[id] = callback; };
   }
   const bounds = { extend() {}, contains() { return true; } };
-  let popup;
-  const marker = { bindTooltip() { return this; }, bindPopup(content) { popup = content; return this; }, addTo() {} };
+  let tap;
+  const marker = { bindTooltip() { return this; }, on(event, callback) { tap = callback; return this; }, addTo() {} };
   let zoom = 15;
   const page = {};
   vm.runInNewContext(code, {
@@ -64,7 +64,13 @@ test("WiGLE status follows visibility, display mode, and clearing", async () => 
   const combined = csv + "\nSecond network,42,-76,WIFI";
   assert.equal(page.ghostEmImportWigleCsv(combined), 2);
   assert.match(controls.wigleStatus.textContent, /1 Wi-Fi reception locations in view/);
-  assert.match(popup, /Test network/);
-  assert.match(popup, /Second network/);
+  tap();
+  assert.equal(controls.wifiDetails.hidden, false);
+  assert.match(controls.wifiDetailsContent.innerHTML, /Test network/);
+  assert.match(controls.wifiDetailsContent.innerHTML, /Second network/);
+  handlers.moveend();
+  assert.equal(controls.wifiDetails.hidden, false);
+  controls.closeWifiDetails.onclick();
+  assert.equal(controls.wifiDetails.hidden, true);
   assert.throws(() => page.ghostEmImportWigleCsv("SSID,lat,lon\nNo fix,,"), /valid coordinates/);
 });
