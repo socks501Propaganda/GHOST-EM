@@ -1204,20 +1204,31 @@
         $(id).addEventListener("change", () => renderWigleImport(false));
       }
 
+      function importWigleCsv(csvText) {
+        const observations = parseWigleCSV(csvText);
+        if (!observations.length) throw Error("No Wi-Fi observations with valid coordinates.");
+        wigleObservations = observations;
+        $("wigleLayer").checked = true;
+        wigle.addTo(map);
+        saveLayerSettings();
+        $("clearWigle").disabled = false;
+        renderWigleImport(true);
+        return observations.length;
+      }
+
+      window.ghostEmImportWigleCsv = (csvText) => {
+        $("wigleFile").value = "";
+        return importWigleCsv(csvText);
+      };
+
       $("wigleFile").onchange = async (event) => {
         const input = event.target;
         const file = input.files?.[0];
         if (!file) return;
         try {
-          const observations = parseWigleCSV(await file.text());
+          const csvText = await file.text();
           if (input.files?.[0] !== file) return;
-          if (!observations.length) throw Error("No Wi-Fi observations with valid coordinates.");
-          wigleObservations = observations;
-          $("wigleLayer").checked = true;
-          wigle.addTo(map);
-          saveLayerSettings();
-          $("clearWigle").disabled = false;
-          renderWigleImport(true);
+          importWigleCsv(csvText);
         } catch (error) {
           if (input.files?.[0] !== file) return;
           $("wigleStatus").textContent = "Import error: " + error.message;

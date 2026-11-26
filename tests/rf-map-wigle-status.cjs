@@ -17,7 +17,9 @@ test("WiGLE status follows visibility, display mode, and clearing", async () => 
   const bounds = { extend() {}, contains() { return true; } };
   const marker = { bindTooltip() { return this; }, bindPopup() { return this; }, addTo() {} };
   let zoom = 15;
+  const page = {};
   vm.runInNewContext(code, {
+    window: page,
     $: (id) => controls[id] ??= {},
     wigle: { clearLayers() {}, addTo() {} },
     map: { on: (event, callback) => { handlers[event] = callback; }, getZoom: () => zoom, getBounds: () => bounds, fitBounds() {} },
@@ -54,4 +56,9 @@ test("WiGLE status follows visibility, display mode, and clearing", async () => 
   await pending;
   handlers.moveend();
   assert.equal(controls.wigleStatus.textContent, "");
+
+  zoom = 15;
+  assert.equal(page.ghostEmImportWigleCsv(csv), 1);
+  assert.match(controls.wigleStatus.textContent, /1 WiGLE observations in view/);
+  assert.throws(() => page.ghostEmImportWigleCsv("SSID,lat,lon\nNo fix,,"), /valid coordinates/);
 });
