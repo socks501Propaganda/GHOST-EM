@@ -140,6 +140,15 @@ def cbrs_protection_areas(request):
     return response
 
 
+@login_required
+def public_wifi_snapshot(request):
+    dataset = Path(__file__).resolve().parent / "data" / "ny-public-wifi.json.gz"
+    response = FileResponse(dataset.open("rb"), content_type="application/json")
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers["Cache-Control"] = "private, max-age=86400"
+    return response
+
+
 US_STATE_NAMES = dict(zip(
     "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN "
     "MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split(),
@@ -577,6 +586,7 @@ urlpatterns = [
     path("submit", submit),
     path("rf-map/", rf_map),
     path("rf-map/address-search/", search_address, name="rf_address_search"),
+    path("rf-map/public-wifi/", public_wifi_snapshot),
     path("rf-map/cbrs/protection-areas/", cbrs_protection_areas),
     path("dashboard/login/", dashboard_login),
     path("dashboard/accounts/", dashboard_accounts, name="dashboard_accounts"),

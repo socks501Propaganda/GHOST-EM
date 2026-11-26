@@ -385,6 +385,7 @@
             <label><input type="checkbox" id="sites" checked /> Tower and infrastructure sites</label>
             <label><input type="checkbox" id="heat" checked /> Estimated coverage</label>
             <label><input type="checkbox" id="cells" checked /> OpenCellID estimates</label>
+            <label><input type="checkbox" id="publicWifiLayer"> Public Wi-Fi</label>
             <label><input type="checkbox" id="wigleLayer" checked /> WiGLE observation density</label>
             <label><input type="checkbox" id="surveyLayer" checked /> Survey waypoints</label>
             <label><input type="checkbox" id="federalCbrs"> <span aria-hidden="true" class="cbrs-toggle-symbol cbrs-federal">▲</span> Federal CBRS areas</label>
@@ -460,7 +461,9 @@
           <button class="secondary" id="fitCells" disabled>Fit imported cells</button>
         </section>
         <section class="tool-panel">
-          <h2>WiGLE import</h2>
+          <h2>Public Wi-Fi and WiGLE</h2>
+          <p class="small">Public Wi-Fi shows a one-time <a href="https://data.cityofnewyork.us/d/yjub-udmw">NYC Open Data</a> snapshot covering the five boroughs. Availability may have changed since the source was published.</p>
+          <p class="small" id="publicWifiStatus" role="status">Turn on Public Wi-Fi and zoom in to see hotspot locations.</p>
           <p class="small">Import a WiGLE CSV you have permission to use. The map groups Wi-Fi observations into grid squares in your browser.</p>
           <label for="wigleFile">WiGLE CSV file</label>
           <input id="wigleFile" type="file" accept=".csv,text/csv" />
@@ -748,7 +751,7 @@
         $("cellularCount").textContent = sites.filter((site) => site.cellular).length;
         $("cellCount").textContent = cells.length;
       }
-      const layerIds = ["sites", "heat", "cells", "wigleLayer", "surveyLayer", "federalCbrs", "fssCbrs", "legacyCbrs"];
+      const layerIds = ["sites", "heat", "cells", "publicWifiLayer", "wigleLayer", "surveyLayer", "federalCbrs", "fssCbrs", "legacyCbrs"];
       const layerSettingsKey = "ghostem.rf-map.layers";
 
       function saveLayerSettings() {
@@ -808,6 +811,65 @@
           clearTimeout(timer);
         }
       }
+
+      const publicWifi = L.layerGroup();
+      const publicWifiToggle = $("publicWifiLayer");
+      const publicWifiStatus = $("publicWifiStatus");
+      let publicWifiSnapshot;
+      let publicWifiRequest;
+
+      function drawPublicWifi() {
+        publicWifi.clearLayers();
+        if (!publicWifiToggle.checked || !publicWifiSnapshot) return;
+        const { locations, date } = publicWifiSnapshot;
+        if (map.getZoom() < 10) {
+          publicWifiStatus.textContent = "Zoom in to see public Wi-Fi (snapshot " + date + ").";
+          return;
+        }
+        const bounds = map.getBounds();
+        let count = 0;
+        for (const spot of locations) {
+          const position = [spot.lat, spot.lng];
+          if (!bounds.contains(position)) continue;
+          const details = [spot.provider, spot.access, spot.ssid && "SSID " + spot.ssid, spot.source]
+            .filter(Boolean).map(safe).join("<br>");
+          L.circleMarker(position, {
+            radius: 5, color: "#19233c", weight: 1, fillColor: "#cf9fff", fillOpacity: 0.9,
+          }).bindTooltip(safe(spot.name)).bindPopup("<strong>" + safe(spot.name) + "</strong><br>" + details)
+            .addTo(publicWifi);
+          count++;
+        }
+        publicWifiStatus.textContent = count + " public Wi-Fi locations in view • Snapshot " + date;
+      }
+
+      async function updatePublicWifi() {
+        if (!publicWifiToggle.checked) {
+          map.removeLayer(publicWifi);
+          publicWifi.clearLayers();
+          publicWifiStatus.textContent = "Turn on Public Wi-Fi and zoom in to see hotspot locations.";
+          return;
+        }
+        publicWifi.addTo(map);
+        if (!publicWifiSnapshot) {
+          publicWifiStatus.textContent = "Loading public Wi-Fi locations…";
+          publicWifiRequest ??= fetchTowerData("public-wifi/", 12000)
+            .finally(() => { publicWifiRequest = null; });
+          try {
+            publicWifiSnapshot = await publicWifiRequest;
+          } catch {
+            if (publicWifiToggle.checked) publicWifiStatus.textContent = "Could not load public Wi-Fi. Toggle it off and on to retry.";
+            return;
+          }
+        }
+        drawPublicWifi();
+      }
+
+      publicWifiToggle.addEventListener("change", () => {
+        saveLayerSettings();
+        updatePublicWifi();
+      });
+      map.on("moveend", drawPublicWifi);
+      updatePublicWifi();
 
       async function requestUSTowers([south, west, north, east]) {
         const params = new URLSearchParams({
