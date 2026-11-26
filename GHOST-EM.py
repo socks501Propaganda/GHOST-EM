@@ -61,6 +61,7 @@ if not settings.configured:
             "django.contrib.auth",
             "django.contrib.contenttypes",
             "django.contrib.sessions",
+            "rf_surveys",
         ],
         DATABASES={
             "default": dj_database_url.config(
@@ -494,6 +495,11 @@ from django.core.wsgi import get_wsgi_application
 
 application = get_wsgi_application()
 
+if os.environ.get("RENDER_EXTERNAL_HOSTNAME") and os.environ.get("DATABASE_URL"):
+    from rf_surveys.deploy import migrate_survey_storage
+
+    migrate_survey_storage()
+
 from django.contrib.auth import SESSION_KEY, get_user_model
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.views import LoginView, LogoutView
@@ -585,6 +591,8 @@ def promote_account(request, account_id):
     return render(request, "promote_account.html", {"account": account, "error": error})
 
 
+from rf_surveys.views import survey_map
+
 urlpatterns = [
     path("", index),
     path(
@@ -600,6 +608,7 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(next_page="login"), name="logout"),
     path("submit", submit),
     path("rf-map/", rf_map),
+    path("rf-map/synced-survey/", survey_map),
     path("rf-map/sign-out/", LogoutView.as_view(next_page="/login/?next=/rf-map/"), name="rf_map_sign_out"),
     path("rf-map/address-search/", login_required(search_address), name="rf_address_search"),
     path("rf-map/public-wifi/", login_required(public_wifi_snapshot)),

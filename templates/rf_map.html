@@ -470,16 +470,22 @@
           <h2>Public Wi-Fi and WiGLE</h2>
           <p class="small">Public Wi-Fi shows a one-time <a href="https://data.cityofnewyork.us/d/yjub-udmw">NYC Open Data</a> snapshot for the five boroughs and <a href="https://nysl.nysed.gov/find-your-public-library?field_wifi247_value=1">New York State Library listings</a> for libraries reporting 24/7 Wi-Fi elsewhere in the state. Availability may have changed since the source was published.</p>
           <p class="small" id="publicWifiStatus" role="status">Turn on Public Wi-Fi and zoom in to see hotspot locations.</p>
-          <p class="small">Import a WiGLE CSV you have permission to use. Choose density or individual pins. The file stays in your browser.</p>
+          <p class="small">Import a WiGLE CSV you have permission to use. Choose density or reception pins. Files selected here stay in your browser.</p>
           <label for="wigleMode">WiGLE display</label>
           <select id="wigleMode">
             <option value="density">Observation density</option>
-            <option value="pins">Individual access points</option>
+            <option value="pins">Reception locations</option>
           </select>
           <label for="wigleFile">WiGLE CSV file</label>
           <input id="wigleFile" type="file" accept=".csv,text/csv" />
           <button class="secondary" id="clearWigle" disabled>Clear WiGLE layer</button>
           <p class="small" id="wigleStatus" role="status"></p>
+          {% if not guest %}
+            <p class="small">Imports from the Ghost-Em app sync to this account.</p>
+            <p class="small" id="surveySyncStatus" role="status"></p>
+            <button type="button" id="retrySurveySync" hidden>Retry sync</button>
+            <button type="button" id="deleteSyncedSurvey" hidden>Delete synced observations</button>
+          {% endif %}
           <a href="https://wigle.net/" target="_blank" rel="noopener noreferrer">Open the WiGLE map</a>
         </section>
         <section class="tool-panel">
@@ -1108,6 +1114,7 @@
           ["SSID", ["ssid"]], ["BSSID", ["netid", "bssid", "mac"]],
           ["Channel", ["channel"]], ["Frequency", ["frequency"]],
           ["Security", ["encryption", "authmode", "security"]],
+          ["GPS accuracy", ["accuracymeters"]], ["Signal", ["rssi"]],
           ["First seen", ["firsttime", "firstseen"]], ["Last seen", ["lasttime", "lastseen"]],
           ["Last updated", ["lastupdt"]], ["Type", ["type"]],
         ];
@@ -1142,6 +1149,78 @@
       }
 
       let wigleObservations = [];
+      let localWigleRows = [];
+      let syncedWigleRows = [];
+      let pendingSurveySync = [];
+      let syncInProgress = false;
+      const syncUrl = "synced-survey/";
+      const syncStatus = $("surveySyncStatus");
+
+      function mergeWigleRows(...groups) {
+        const rows = new Map();
+        for (const group of groups) {
+          for (const row of group) {
+            const key = JSON.stringify([row.lat, row.lon, row.details.slice().sort()]);
+            rows.set(key, row);
+          }
+        }
+        return [...rows.values()];
+      }
+
+      function refreshWigleRows(fit) {
+        wigleObservations = mergeWigleRows(localWigleRows, syncedWigleRows);
+        $("clearWigle").disabled = !localWigleRows.length;
+        if (wigleObservations.length) {
+          renderWigleImport(fit);
+        } else {
+          wigle.clearLayers();
+          $("wigleStatus").textContent = "";
+        }
+      }
+
+      async function requestSurveySync(method, rows) {
+        const token = document.querySelector("#addressSearch [name=csrfmiddlewaretoken]").value;
+        const response = await fetch(syncUrl, {
+          method,
+          cache: "no-store",
+          redirect: "error",
+          headers: {
+            "X-CSRFToken": token, "Content-Type": "application/json",
+            "X-Ghost-Em-Owner": document.body.dataset.surveyOwner,
+          },
+          body: rows ? JSON.stringify(rows) : undefined,
+        });
+        const result = await response.json();
+        if (!response.ok) throw Error(result.error || "Server could not sync the survey.");
+        return result.observations;
+      }
+
+      async function updateSurveySync(method = "GET") {
+        if (!syncStatus || syncInProgress) return;
+        syncInProgress = true;
+        const queued = pendingSurveySync;
+        try {
+          const rows = await requestSurveySync(method, method === "POST" ? queued : undefined);
+          const changed = JSON.stringify(rows) !== JSON.stringify(syncedWigleRows);
+          syncedWigleRows = rows;
+          if (method === "POST" && pendingSurveySync === batch) pendingSurveySync = [];
+          if (method === "DELETE") pendingSurveySync = [];
+          if (changed) refreshWigleRows(method === "GET" && !localWigleRows.length && !wigle.getLayers().length);
+          $("deleteSyncedSurvey").hidden = !rows.length;
+          syncStatus.textContent = pendingSurveySync.length
+            ? "Some observations are waiting to sync."
+            : rows.length + " observations synced to this account.";
+        } catch {
+          syncStatus.textContent = method === "POST"
+            ? "Plotted on this device. Sync failed. " + (error.message || "Retry when online and signed in.")
+            : "Could not " + (method === "DELETE" ? "delete" : "load") + " synced observations.";
+          return;
+        } finally {
+          syncInProgress = false;
+          $("retrySurveySync").hidden = !pendingSurveySync.length;
+        }
+        if (pendingSurveySync.length) void updateSurveySync("POST");
+      }
 
       function drawWiglePins() {
         if ($("wigleMode").value !== "pins" || !$("wigleLayer").checked || !wigleObservations.length) return;
@@ -1151,23 +1230,36 @@
           return;
         }
         const viewport = map.getBounds();
-        let visible = 0;
-        for (const { lat, lon, details } of wigleObservations) {
+        const locations = new Map();
+        for (const observation of wigleObservations) {
+          const { lat, lon } = observation;
           if (!viewport.contains([lat, lon])) continue;
-          if (++visible > 2000) break;
-          const label = details.find(([name]) => name === "SSID")?.[1] ||
-            details.find(([name]) => name === "BSSID")?.[1] || "WiGLE access point";
-          const metadata = details.map(([name, value]) => safe(name) + ": " + safe(value)).join("<br>");
-          L.circleMarker([lat, lon], {
-            radius: 5, color: "#17374b", weight: 1, fillColor: "#62dfb9", fillOpacity: .9,
-          }).bindTooltip(safe(label))
-            .bindPopup("<strong>" + safe(label) + "</strong><br>" + metadata +
-              "<br>Coordinates: " + lat + ", " + lon + "<br>Source: WiGLE CSV")
-            .addTo(wigle);
+          const key = lat + "," + lon;
+          if (!locations.has(key)) locations.set(key, []);
+          locations.get(key).push(observation);
         }
-        $("wigleStatus").textContent = visible > 2000
-          ? "Showing 2,000 WiGLE observations. Zoom in for more detail."
-          : visible + " WiGLE observations in view.";
+        let shown = 0;
+        for (const observations of locations.values()) {
+          if (shown++ === 2000) break;
+          const { lat, lon } = observations[0];
+          const entries = observations.map(({ details }) => {
+            const label = details.find(([name]) => name === "SSID")?.[1] ||
+              details.find(([name]) => name === "BSSID")?.[1] || "Wi-Fi observation";
+            const metadata = details.filter(([name]) => name !== "SSID")
+              .map(([name, value]) => safe(name) + ": " + safe(value)).join("<br>");
+            return "<strong>" + safe(label) + "</strong>" + (metadata ? "<br>" + metadata : "");
+          });
+          const label = observations.length === 1
+            ? "1 Wi-Fi observation" : observations.length + " Wi-Fi observations";
+          L.circleMarker([lat, lon], {
+            radius: observations.length === 1 ? 5 : 9,
+            color: "#17374b", weight: 1, fillColor: "#62dfb9", fillOpacity: .9,
+          }).bindTooltip(label).bindPopup("<strong>Reception location</strong><br>" + lat + ", " + lon +
+            "<br>" + entries.join("<hr>")).addTo(wigle);
+        }
+        $("wigleStatus").textContent = locations.size > 2000
+          ? "Showing 2,000 reception locations. Zoom in for more detail."
+          : locations.size + " Wi-Fi reception locations in view.";
       }
 
       map.on("moveend", drawWiglePins);
@@ -1207,18 +1299,22 @@
       function importWigleCsv(csvText) {
         const observations = parseWigleCSV(csvText);
         if (!observations.length) throw Error("No Wi-Fi observations with valid coordinates.");
-        wigleObservations = observations;
+        localWigleRows = observations;
         $("wigleLayer").checked = true;
         wigle.addTo(map);
         saveLayerSettings();
-        $("clearWigle").disabled = false;
-        renderWigleImport(true);
+        refreshWigleRows(true);
         return observations.length;
       }
 
       window.ghostEmImportWigleCsv = (csvText) => {
         $("wigleFile").value = "";
-        return importWigleCsv(csvText);
+        const count = importWigleCsv(csvText);
+        if (syncStatus) {
+          pendingSurveySync = mergeWigleRows(pendingSurveySync, localWigleRows);
+          void updateSurveySync("POST");
+        }
+        return count;
       };
 
       $("wigleFile").onchange = async (event) => {
@@ -1235,12 +1331,20 @@
         }
       };
       $("clearWigle").onclick = () => {
-        wigleObservations = [];
-        wigle.clearLayers();
+        localWigleRows = [];
         $("wigleFile").value = "";
-        $("clearWigle").disabled = true;
-        $("wigleStatus").textContent = "";
+        refreshWigleRows(false);
       };
+      if (syncStatus) {
+        $("retrySurveySync").onclick = () => updateSurveySync("POST");
+        $("deleteSyncedSurvey").onclick = () => {
+          if (confirm("Delete all observations synced to this account?")) void updateSurveySync("DELETE");
+        };
+        void updateSurveySync();
+        setInterval(() => {
+          if (!document.hidden && !pendingSurveySync.length) void updateSurveySync();
+        }, 15000);
+      }
       map.on("click", (e) => {
         $("status").textContent =
           "Selected " +

@@ -15,12 +15,13 @@ test("WiGLE status follows visibility, display mode, and clearing", async () => 
     control.addEventListener = (event, callback) => { handlers[id] = callback; };
   }
   const bounds = { extend() {}, contains() { return true; } };
-  const marker = { bindTooltip() { return this; }, bindPopup() { return this; }, addTo() {} };
+  let popup;
+  const marker = { bindTooltip() { return this; }, bindPopup(content) { popup = content; return this; }, addTo() {} };
   let zoom = 15;
   const page = {};
   vm.runInNewContext(code, {
     window: page,
-    $: (id) => controls[id] ??= {},
+    $: (id) => id === "surveySyncStatus" ? null : controls[id] ??= {},
     wigle: { clearLayers() {}, addTo() {} },
     map: { on: (event, callback) => { handlers[event] = callback; }, getZoom: () => zoom, getBounds: () => bounds, fitBounds() {} },
     L: { latLngBounds: () => bounds, rectangle: () => marker, circleMarker: () => marker },
@@ -43,7 +44,7 @@ test("WiGLE status follows visibility, display mode, and clearing", async () => 
 
   controls.wigleLayer.checked = true;
   handlers.wigleLayer();
-  assert.match(controls.wigleStatus.textContent, /1 WiGLE observations in view/);
+  assert.match(controls.wigleStatus.textContent, /1 Wi-Fi reception locations in view/);
   zoom = 10;
   handlers.moveend();
   assert.match(controls.wigleStatus.textContent, /Zoom in/);
@@ -59,6 +60,11 @@ test("WiGLE status follows visibility, display mode, and clearing", async () => 
 
   zoom = 15;
   assert.equal(page.ghostEmImportWigleCsv(csv), 1);
-  assert.match(controls.wigleStatus.textContent, /1 WiGLE observations in view/);
+  assert.match(controls.wigleStatus.textContent, /1 Wi-Fi reception locations in view/);
+  const combined = csv + "\nSecond network,42,-76,WIFI";
+  assert.equal(page.ghostEmImportWigleCsv(combined), 2);
+  assert.match(controls.wigleStatus.textContent, /1 Wi-Fi reception locations in view/);
+  assert.match(popup, /Test network/);
+  assert.match(popup, /Second network/);
   assert.throws(() => page.ghostEmImportWigleCsv("SSID,lat,lon\nNo fix,,"), /valid coordinates/);
 });
