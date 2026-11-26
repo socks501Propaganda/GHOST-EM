@@ -10,5 +10,5 @@ def migrate_survey_storage():
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(%s)", [426635218])
         applied = MigrationRecorder(connection).applied_migrations()
-        if ("rf_surveys", "0001_initial") not in applied:
+        if ("rf_surveys", "0002_remove_duplicate_receptions") not in applied:
             call_command("migrate", "rf_surveys", interactive=False)

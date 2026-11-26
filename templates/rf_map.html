@@ -411,7 +411,8 @@
             <label><input type="checkbox" id="heat" checked /> Estimated coverage</label>
             <label><input type="checkbox" id="cells" checked /> OpenCellID estimates</label>
             <label><input type="checkbox" id="publicWifiLayer"> Public Wi-Fi</label>
-            <label><input type="checkbox" id="wigleLayer" checked /> WiGLE observations</label>
+            <label><input type="checkbox" id="wigleLayer" checked /> Wi-Fi observations</label>
+            <label><input type="checkbox" id="bluetoothLayer" checked /> Bluetooth observations</label>
             <label><input type="checkbox" id="surveyLayer" checked /> Survey waypoints</label>
             <label><input type="checkbox" id="federalCbrs"> <span aria-hidden="true" class="cbrs-toggle-symbol cbrs-federal">▲</span> Federal CBRS areas</label>
             <label><input type="checkbox" id="fssCbrs"> <span aria-hidden="true" class="cbrs-toggle-symbol cbrs-fss">●</span> FSS earth stations</label>
@@ -496,10 +497,10 @@
           <h2>Public Wi-Fi and WiGLE</h2>
           <p class="small">Public Wi-Fi shows a one-time <a href="https://data.cityofnewyork.us/d/yjub-udmw">NYC Open Data</a> snapshot for the five boroughs and <a href="https://nysl.nysed.gov/find-your-public-library?field_wifi247_value=1">New York State Library listings</a> for libraries reporting 24/7 Wi-Fi elsewhere in the state. Availability may have changed since the source was published.</p>
           <p class="small" id="publicWifiStatus" role="status">Turn on Public Wi-Fi and zoom in to see hotspot locations.</p>
-          <p class="small">Import a WiGLE CSV you have permission to use. Tap a reception circle for SSID and BSSID. Its position is where the signal was recorded. Files selected here stay in your browser.</p>
+          <p class="small">Import a WiGLE CSV you have permission to use. Tap a red Wi-Fi circle for SSID and BSSID. Multiple readings from different locations can yield an approximate position. Blue circles show Bluetooth observations. Files selected here stay in your browser.</p>
           <label for="wigleMode">WiGLE display</label>
           <select id="wigleMode">
-            <option value="pins">Reception locations</option>
+            <option value="pins">Individual devices</option>
             <option value="density">Observation density</option>
           </select>
           <label for="wigleFile">WiGLE CSV file</label>
@@ -796,7 +797,7 @@
         $("cellularCount").textContent = sites.filter((site) => site.cellular).length;
         $("cellCount").textContent = cells.length;
       }
-      const layerIds = ["sites", "heat", "cells", "publicWifiLayer", "wigleLayer", "surveyLayer", "federalCbrs", "fssCbrs", "legacyCbrs"];
+      const layerIds = ["sites", "heat", "cells", "publicWifiLayer", "wigleLayer", "bluetoothLayer", "surveyLayer", "federalCbrs", "fssCbrs", "legacyCbrs"];
       const layerSettingsKey = "ghostem.rf-map.layers";
       const layerStorage = document.body.dataset.guest === undefined ? "localStorage" : "sessionStorage";
 
@@ -826,7 +827,7 @@
       }
       for (const id of ["radius", "opacity"]) $(id).addEventListener("input", redraw);
 
-      for (const [id, layer] of [["wigleLayer", wigle], ["surveyLayer", surveys]]) {
+      for (const [id, layer] of [["surveyLayer", surveys]]) {
         const updateVisibility = () => {
           if ($(id).checked) layer.addTo(map);
           else map.removeLayer(layer);
@@ -1140,7 +1141,7 @@
           ["SSID", ["ssid"]], ["BSSID", ["netid", "bssid", "mac"]],
           ["Channel", ["channel"]], ["Frequency", ["frequency"]],
           ["Security", ["encryption", "authmode", "security"]],
-          ["GPS accuracy", ["accuracymeters"]], ["Signal", ["rssi"]],
+          ["GPS accuracy", ["accuracymeters"]], ["Signal", ["rssi", "dbm", "signal", "signalstrength"]],
           ["First seen", ["firsttime", "firstseen"]], ["Last seen", ["lasttime", "lastseen"]],
           ["Last updated", ["lastupdt"]], ["Type", ["type"]],
         ];
@@ -1149,7 +1150,7 @@
         for (const line of lines) {
           const row = splitCSVRow(line);
           const type = row[typeIndex]?.trim().toUpperCase();
-          if (type && !["WIFI", "WI-FI", "INFRA", "ADHOC"].includes(type)) continue;
+          if (type && !["WIFI", "WI-FI", "INFRA", "ADHOC", "BLE"].includes(type)) continue;
           const latitude = row[latIndex]?.trim();
           const longitude = row[lonIndex]?.trim();
           if (!latitude || !longitude) continue;
@@ -1181,6 +1182,7 @@
       }
 
       let wigleObservations = [];
+      let devicePlots = [];
       let localWigleRows = [];
       let syncedWigleRows = [];
       let pendingSurveySync = [];
@@ -1192,8 +1194,12 @@
         const rows = new Map();
         for (const group of groups) {
           for (const row of group) {
-            const key = JSON.stringify([row.lat, row.lon, row.details.slice().sort()]);
-            rows.set(key, row);
+            const address = observationField(row, "BSSID").trim().toLowerCase();
+            const coordinates = [row.lat, row.lon];
+            const key = address
+              ? JSON.stringify([isBluetooth(row), address, coordinates.map((value) => Math.round(value * 10000))])
+              : JSON.stringify([...coordinates, row.details.slice().sort()]);
+            if (!rows.has(key)) rows.set(key, row);
           }
         }
         return [...rows.values()];
@@ -1201,6 +1207,7 @@
 
       function refreshWigleRows(fit) {
         wigleObservations = mergeWigleRows(localWigleRows, syncedWigleRows);
+        devicePlots = buildDevicePlots(wigleObservations);
         $("clearWigle").disabled = !localWigleRows.length;
         if (wigleObservations.length) {
           renderWigleImport(fit);
@@ -1253,86 +1260,170 @@
         if (pendingSurveySync.length) void updateSurveySync("POST");
       }
 
-      function addWifiCircle(lat, lon, observations, heading) {
-        const entries = observations.map(({ details }) => {
-          const label = details.find(([name]) => name === "SSID")?.[1] ||
-            details.find(([name]) => name === "BSSID")?.[1] || "Wi-Fi observation";
-          const metadata = details.filter(([name]) => name !== "SSID")
-            .map(([name, value]) => safe(name) + ": " + safe(value)).join("<br>");
-          return "<strong>SSID: " + safe(label) + "</strong>" + (metadata ? "<br>" + metadata : "");
+      function observationField(observation, name) {
+        return observation.details.find(([label]) => label === name)?.[1] || "";
+      }
+
+      function signalDbm(observation) {
+        const text = observationField(observation, "Signal").trim().replace(/\s*dBm$/i, "");
+        const signal = Number(text);
+        return text && signal >= -120 && signal < 0 ? signal : -Infinity;
+      }
+
+      function isBluetooth(row) {
+        return observationField(row, "Type").toUpperCase() === "BLE";
+      }
+
+      function buildDevicePlots(observations) {
+        const devices = new Map();
+        for (const observation of observations) {
+          const address = observationField(observation, "BSSID").toLowerCase();
+          const key = address ? (isBluetooth(observation) ? "BLE:" : "WIFI:") + address : Symbol();
+          if (!devices.has(key)) devices.set(key, []);
+          devices.get(key).push(observation);
+        }
+        return [...devices.values()].map((rows) => {
+          rows.sort((a, b) => signalDbm(b) - signalDbm(a));
+          const strongest = rows[0];
+          const bluetooth = isBluetooth(strongest);
+          const measured = { ...strongest, bluetooth, samples: 0 };
+          if (bluetooth || rows.length < 3 || !Number.isFinite(signalDbm(strongest))) return measured;
+
+          const samples = [];
+          for (const row of rows) {
+            if (!Number.isFinite(signalDbm(row)) || map.distance([strongest.lat, strongest.lon], [row.lat, row.lon]) > 1000) continue;
+            const accuracy = Number(observationField(row, "GPS accuracy"));
+            if (accuracy > 30) continue;
+            const spacing = Math.max(12, accuracy || 0);
+            if (samples.some((sample) => map.distance([sample.lat, sample.lon], [row.lat, row.lon]) < spacing)) continue;
+            samples.push(row);
+            if (samples.length === 32) break;
+          }
+          if (samples.length < 3) return measured;
+
+          let latitude = 0, longitudeOffset = 0, totalWeight = 0;
+          for (const sample of samples) {
+            const weight = Math.pow(10, (signalDbm(sample) - signalDbm(strongest)) / 20);
+            const delta = ((sample.lon - strongest.lon + 540) % 360) - 180;
+            latitude += sample.lat * weight;
+            longitudeOffset += delta * weight;
+            totalWeight += weight;
+          }
+          const longitude = strongest.lon + longitudeOffset / totalWeight;
+          return { ...measured, lat: latitude / totalWeight,
+            lon: ((longitude + 540) % 360) - 180, samples: samples.length };
         });
-        const count = observations.length;
-        const ssid = observations[0].details.find(([name]) => name === "SSID")?.[1];
-        const bssid = observations[0].details.find(([name]) => name === "BSSID")?.[1];
-        const label = count === 1 ? ssid || bssid || "Wi-Fi observation" : count + " Wi-Fi observations";
-        L.circleMarker([lat, lon], {
-          radius: Math.min(8, 4 + Math.log2(count)),
-          color: "#ad91ff", weight: 1, opacity: .75, fillColor: "#9271eb", fillOpacity: .38,
-          bubblingMouseEvents: false,
+      }
+
+      function addDeviceCircle(lat, lon, rows, heading, options = {}) {
+        const { bluetooth = false, samples = 0, displayPoint = null } = options;
+        const entries = rows.map((row) => {
+          const label = observationField(row, "SSID") || "Unavailable";
+          const metadata = row.details.filter(([name]) => name !== "SSID")
+            .map(([name, value]) => {
+              const field = bluetooth && name === "BSSID" ? "Bluetooth address" : name;
+              return safe(field) + ": " + safe(value);
+            }).join("<br>");
+          return "<strong>" + (bluetooth ? "Device name: " : "SSID: ") + safe(label) + "</strong>" +
+            (metadata ? "<br>" + metadata : "");
+        });
+        const name = observationField(rows[0], "SSID") || observationField(rows[0], "BSSID");
+        const label = rows.length === 1 ? name || "Observation" : rows.length + " Wi-Fi observations";
+        if (displayPoint) {
+          L.polyline([[lat, lon], displayPoint], {
+            color: bluetooth ? "#67c5ff" : "#ff6666", weight: 1, opacity: .55, interactive: false,
+          }).addTo(wigle);
+        }
+        L.circleMarker(displayPoint || [lat, lon], {
+          radius: Math.min(8, 5 + Math.log2(rows.length)),
+          color: bluetooth ? "#67c5ff" : "#ff5757",
+          fillColor: bluetooth ? "#219efa" : "#f02c38",
+          weight: 1.5, opacity: .9, fillOpacity: .44, bubblingMouseEvents: false,
         }).bindTooltip(safe(label)).on("click", () => {
+          const context = samples ? "<br>Approximate position from " + samples + " signal readings." : "";
+          $("wifiDetailsHeading").textContent = bluetooth ? "Bluetooth observation details" : "Wi-Fi observation details";
           $("wifiDetailsContent").innerHTML = "<strong>" + heading + "</strong><br>" +
-            lat + ", " + lon + "<br>" + entries.join("<hr>");
+            lat.toFixed(5) + ", " + lon.toFixed(5) + context + "<br>" + entries.join("<hr>");
           $("wifiDetails").hidden = false;
         }).addTo(wigle);
       }
 
-      function drawWiglePins() {
-        if ($("wigleMode").value !== "pins" || !$("wigleLayer").checked || !wigleObservations.length) return;
-        wigle.clearLayers();
-        if (map.getZoom() < 12) {
-          $("wigleStatus").textContent = "Zoom in to see individual WiGLE pins.";
-          return;
+      function drawDevicePlots(plots) {
+        const occupied = new Map();
+        const nextOffset = new Map();
+        const spacing = 24;
+        for (const plot of plots) {
+          const { lat, lon, bluetooth, samples } = plot;
+          const origin = map.latLngToLayerPoint([lat, lon]);
+          const key = origin.x + "," + origin.y;
+          let index = nextOffset.get(key) || 0;
+          let point;
+          for (;;) {
+            const radius = spacing * Math.sqrt(index);
+            const angle = index * 2.399963;
+            point = { x: origin.x + radius * Math.cos(angle), y: origin.y + radius * Math.sin(angle) };
+            const col = Math.floor(point.x / spacing), row = Math.floor(point.y / spacing);
+            let overlaps = false;
+            for (let x = col - 1; x <= col + 1; x++) {
+              for (let y = row - 1; y <= row + 1; y++) {
+                const other = occupied.get(x + "," + y);
+                if (other && Math.hypot(point.x - other.x, point.y - other.y) < spacing) overlaps = true;
+              }
+            }
+            if (!overlaps && !occupied.has(col + "," + row)) {
+              occupied.set(col + "," + row, point);
+              break;
+            }
+            index++;
+          }
+          nextOffset.set(key, index + 1);
+          const displayPoint = index ? map.layerPointToLatLng(L.point(point.x, point.y)) : null;
+          const heading = samples ? "Estimated access point" : "Reception location";
+          addDeviceCircle(lat, lon, [plot], heading, { bluetooth, samples, displayPoint });
         }
-        const viewport = map.getBounds();
-        const locations = new Map();
-        for (const observation of wigleObservations) {
-          const { lat, lon } = observation;
-          if (!viewport.contains([lat, lon])) continue;
-          const key = lat + "," + lon;
-          if (!locations.has(key)) locations.set(key, []);
-          locations.get(key).push(observation);
-        }
-        let shown = 0;
-        for (const observations of locations.values()) {
-          if (shown++ === 2000) break;
-          const { lat, lon } = observations[0];
-          addWifiCircle(lat, lon, observations, "Reception location");
-        }
-        $("wigleStatus").textContent = locations.size > 2000
-          ? "Showing 2,000 reception locations. Zoom in for more detail."
-          : locations.size + " Wi-Fi reception locations in view.";
       }
 
       const closeWifiDetails = () => { $("wifiDetails").hidden = true; };
       $("closeWifiDetails").onclick = closeWifiDetails;
-      map.on("moveend", drawWiglePins);
+      map.on("moveend", () => renderWigleImport(false));
 
       function renderWigleImport(fit) {
         if (!wigleObservations.length) return;
         wigle.clearLayers();
-        if (!$("wigleLayer").checked) {
-          $("wigleStatus").textContent = "Turn on WiGLE observations to see the imported file.";
+        const showWifi = $("wigleLayer").checked;
+        const showBluetooth = $("bluetoothLayer").checked;
+        const density = $("wigleMode").value === "density";
+        if (!showWifi && !showBluetooth) {
+          $("wigleStatus").textContent = "Turn on Wi-Fi or Bluetooth observations to see results.";
           return;
         }
+
         const bounds = L.latLngBounds();
-        if ($("wigleMode").value === "pins") {
-          for (const { lat, lon } of wigleObservations) bounds.extend([lat, lon]);
-          if (fit) map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
-          drawWiglePins();
-          return;
+        const plots = devicePlots.filter((plot) => plot.bluetooth ? showBluetooth : showWifi && !density);
+        const wifiRows = showWifi && density ? wigleObservations.filter((row) => !isBluetooth(row)) : [];
+        const areas = wigleDensity(wifiRows);
+        for (const { lat, lon } of plots) bounds.extend([lat, lon]);
+        for (const area of areas) bounds.extend([area.lat, area.lon]);
+        if (fit && bounds.isValid()) {
+          map.fitBounds(bounds, { padding: [34, 34], maxZoom: 15, animate: false });
+          wigle.clearLayers();
         }
-        const areas = wigleDensity(wigleObservations);
-        for (const { lat, lon, rows } of areas) {
-          bounds.extend([lat, lon]);
-          addWifiCircle(lat, lon, rows, "Reception area");
-        }
-        $("wigleStatus").textContent = wigleObservations.length + " observations across " + areas.length + " reception areas.";
-        if (fit) map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
+
+        for (const { lat, lon, rows } of areas) addDeviceCircle(lat, lon, rows, "Reception area");
+        const viewport = map.getBounds();
+        const visible = map.getZoom() >= 12 ? plots.filter(({ lat, lon }) => viewport.contains([lat, lon])) : [];
+        drawDevicePlots(visible.slice(0, 2000));
+        const status = [];
+        if (areas.length) status.push(wifiRows.length + " Wi-Fi observations across " + areas.length + " reception areas");
+        if (plots.length) status.push(map.getZoom() < 12 ? "Zoom in to see individual devices"
+          : visible.length > 2000 ? "Showing 2,000 individual devices" : visible.length + " individual devices in view");
+        $("wigleStatus").textContent = status.join(" · ") || "No observations in the selected layers.";
       }
 
-      for (const id of ["wigleLayer", "wigleMode"]) {
+      for (const id of ["wigleLayer", "bluetoothLayer", "wigleMode"]) {
         $(id).addEventListener("change", () => {
           closeWifiDetails();
+          saveLayerSettings();
           renderWigleImport(false);
         });
       }
@@ -1349,10 +1440,11 @@
         return observations.length;
       }
 
-      window.ghostEmImportWigleCsv = (csvText) => {
+      window.ghostEmSupportsLocalImport = true;
+      window.ghostEmImportWigleCsv = (csvText, { sync = true } = {}) => {
         $("wigleFile").value = "";
         const count = importWigleCsv(csvText);
-        if (syncStatus) {
+        if (sync && syncStatus) {
           pendingSurveySync = mergeWigleRows(pendingSurveySync, localWigleRows);
           void updateSurveySync("POST");
         }

@@ -46,7 +46,13 @@ def normalize(rows):
 
 
 def observation_key(row):
-    return (row["lat"], row["lon"], tuple(sorted(tuple(item) for item in row["details"])))
+    details = dict(row["details"])
+    address = details.get("BSSID", "").strip().lower()
+    if address:
+        kind = "BLE" if details.get("Type", "").strip().upper() == "BLE" else "WIFI"
+        cell = tuple(math.floor(row[coordinate] * 10000 + .5) for coordinate in ("lat", "lon"))
+        return kind, address, cell
+    return row["lat"], row["lon"], tuple(sorted(details.items()))
 
 
 @never_cache
@@ -90,9 +96,9 @@ def limit_response():
 def save_observations(owner, rows):
     with transaction.atomic():
         survey, _ = SurveyMap.objects.select_for_update().get_or_create(owner=owner)
-        combined = {observation_key(row): row for row in survey.observations}
-        for row in rows:
-            combined[observation_key(row)] = row
+        combined = {}
+        for row in survey.observations + rows:
+            combined.setdefault(observation_key(row), row)
         if len(combined) > MAX_OBSERVATIONS:
             raise SurveyLimitReached
         survey.observations = list(combined.values())
@@ -115,7 +121,7 @@ def read_android_csv(content):
     for index, row in enumerate(reader, start=1):
         if index > MAX_OBSERVATIONS:
             raise ValueError("Survey exceeds the observation limit.")
-        if (row.get("Type") or "").strip().upper() != "WIFI":
+        if (row.get("Type") or "").strip().upper() not in {"WIFI", "BLE"}:
             continue
         try:
             lat = float(row.get("CurrentLatitude") or "")
@@ -128,7 +134,7 @@ def read_android_csv(content):
                    if row.get(column) and row[column].strip()]
         observations.append({"lat": lat, "lon": lon, "details": details})
     if not observations:
-        raise ValueError("Survey has no Wi-Fi observations with location tags.")
+        raise ValueError("Survey has no observations with location tags.")
     return normalize(observations)
 
 
@@ -151,7 +157,7 @@ def survey_uplink(request):
             return JsonResponse({"error": "Survey upload is too large or invalid."}, status=400)
         rows = read_android_csv(request.body)
     except (ValueError, UnicodeError, csv.Error):
-        return JsonResponse({"error": "Survey CSV is invalid or has no location-tagged Wi-Fi observations."}, status=400)
+        return JsonResponse({"error": "Survey CSV is invalid or has no location-tagged observations."}, status=400)
     try:
         save_observations(request.user, rows)
     except SurveyLimitReached:

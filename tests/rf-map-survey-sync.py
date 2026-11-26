@@ -82,3 +82,28 @@ assert upload(saved, **csrf).status_code == 200
 assert len(desktop.get(url, secure=True, **owner).json()["observations"]) == 1
 assert other.get(url, secure=True, HTTP_X_GHOST_EM_OWNER=str(bob.pk)).json()["observations"] == []
 print("Android uplink passed authentication, CSRF, account binding, quoted UTF-8 CSV, and repeat deduplication.")
+from django.apps import apps
+from django.db import connection, transaction
+from rf_surveys.models import SurveyMap
+
+original = saved[0]
+duplicate = {**original, "lat": 42.00001, "details": [
+    ["BSSID", "02:00:00:00:00:01"], ["SSID", "Renamed network"], ["Signal", "-80"], ["Type", "WIFI"],
+]}
+distinct = {**original, "lat": 42.001}
+bluetooth = {**original, "details": [["BSSID", "02:00:00:00:00:01"], ["Type", "BLE"]]}
+entry = SurveyMap.objects.get(owner=alice)
+entry.observations = [original, duplicate, distinct, bluetooth]
+entry.save(update_fields=["observations"])
+migration = importlib.import_module("rf_surveys.migrations.0002_remove_duplicate_receptions")
+with transaction.atomic():
+    migration.remove_duplicate_receptions(apps, type("Schema", (), {"connection": connection})())
+entry.refresh_from_db()
+assert entry.observations == [original, distinct, bluetooth]
+updated_csv = csv_header + "Duplicate,02:00:00:00:00:01,2412,WPA2,,,42.00001,-76,5,-80,WIFI\n"
+updated_csv += "New beacon,02:00:00:00:00:03,,,,,42,-76,5,-65,BLE\n"
+assert submit_csv(phone, updated_csv, uplink_headers).json() == {"count": 2}
+entry.refresh_from_db()
+assert len(entry.observations) == 4
+assert dict(entry.observations[-1]["details"])["Type"] == "BLE"
+print("Existing duplicates removed; new repeat receptions did not replace or duplicate stored rows.")
