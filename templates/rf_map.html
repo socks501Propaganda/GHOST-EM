@@ -386,7 +386,7 @@
             <label><input type="checkbox" id="heat" checked /> Estimated coverage</label>
             <label><input type="checkbox" id="cells" checked /> OpenCellID estimates</label>
             <label><input type="checkbox" id="publicWifiLayer"> Public Wi-Fi</label>
-            <label><input type="checkbox" id="wigleLayer" checked /> WiGLE observation density</label>
+            <label><input type="checkbox" id="wigleLayer" checked /> WiGLE observations</label>
             <label><input type="checkbox" id="surveyLayer" checked /> Survey waypoints</label>
             <label><input type="checkbox" id="federalCbrs"> <span aria-hidden="true" class="cbrs-toggle-symbol cbrs-federal">▲</span> Federal CBRS areas</label>
             <label><input type="checkbox" id="fssCbrs"> <span aria-hidden="true" class="cbrs-toggle-symbol cbrs-fss">●</span> FSS earth stations</label>
@@ -464,7 +464,12 @@
           <h2>Public Wi-Fi and WiGLE</h2>
           <p class="small">Public Wi-Fi shows a one-time <a href="https://data.cityofnewyork.us/d/yjub-udmw">NYC Open Data</a> snapshot for the five boroughs and <a href="https://nysl.nysed.gov/find-your-public-library?field_wifi247_value=1">New York State Library listings</a> for libraries reporting 24/7 Wi-Fi elsewhere in the state. Availability may have changed since the source was published.</p>
           <p class="small" id="publicWifiStatus" role="status">Turn on Public Wi-Fi and zoom in to see hotspot locations.</p>
-          <p class="small">Import a WiGLE CSV you have permission to use. The map groups Wi-Fi observations into grid squares in your browser.</p>
+          <p class="small">Import a WiGLE CSV you have permission to use. Choose density or individual pins. The file stays in your browser.</p>
+          <label for="wigleMode">WiGLE display</label>
+          <select id="wigleMode">
+            <option value="density">Observation density</option>
+            <option value="pins">Individual access points</option>
+          </select>
           <label for="wigleFile">WiGLE CSV file</label>
           <input id="wigleFile" type="file" accept=".csv,text/csv" />
           <button class="secondary" id="clearWigle" disabled>Clear WiGLE layer</button>
@@ -1081,7 +1086,7 @@
         for (const cell of cells) bounds.extend([cell.lat, cell.lon]);
         map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
       };
-      function parseWigleDensity(text) {
+      function parseWigleCSV(text) {
         const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
         if (/^WigleWifi-/i.test(lines[0] || "")) lines.shift();
         const headers = splitCSVRow(lines.shift() || "").map((value) => value.trim().toLowerCase());
@@ -1090,7 +1095,15 @@
         const typeIndex = headers.indexOf("type");
         if (latIndex < 0 || lonIndex < 0) throw Error("The file is missing WiGLE latitude and longitude columns.");
 
-        const grid = new Map();
+        const fieldAliases = [
+          ["SSID", ["ssid"]], ["BSSID", ["netid", "bssid", "mac"]],
+          ["Channel", ["channel"]], ["Frequency", ["frequency"]],
+          ["Security", ["encryption", "authmode", "security"]],
+          ["First seen", ["firsttime", "firstseen"]], ["Last seen", ["lasttime", "lastseen"]],
+          ["Last updated", ["lastupdt"]], ["Type", ["type"]],
+        ];
+        const fields = fieldAliases.map(([label, names]) => [label, headers.findIndex(name => names.includes(name))]);
+        const observations = [];
         for (const line of lines) {
           const row = splitCSVRow(line);
           const type = row[typeIndex]?.trim().toUpperCase();
@@ -1101,6 +1114,15 @@
           const lat = Number(latitude);
           const lon = Number(longitude);
           if (!(lat >= -90 && lat < 90 && lon >= -180 && lon < 180)) continue;
+          const details = fields.map(([label, i]) => [label, row[i]?.trim()]).filter(([, value]) => value);
+          observations.push({ lat, lon, details });
+        }
+        return observations;
+      }
+
+      function wigleDensity(observations) {
+        const grid = new Map();
+        for (const { lat, lon } of observations) {
           const y = Math.floor(lat * 100);
           const x = Math.floor(lon * 100);
           const key = y + "," + x;
@@ -1110,39 +1132,88 @@
         return [...grid.values()];
       }
 
+      let wigleObservations = [];
+
+      function drawWiglePins() {
+        if ($("wigleMode").value !== "pins" || !$("wigleLayer").checked || !wigleObservations.length) return;
+        wigle.clearLayers();
+        if (map.getZoom() < 12) {
+          $("wigleStatus").textContent = "Zoom in to see individual WiGLE pins.";
+          return;
+        }
+        const viewport = map.getBounds();
+        let visible = 0;
+        for (const { lat, lon, details } of wigleObservations) {
+          if (!viewport.contains([lat, lon])) continue;
+          if (++visible > 2000) break;
+          const label = details.find(([name]) => name === "SSID")?.[1] ||
+            details.find(([name]) => name === "BSSID")?.[1] || "WiGLE access point";
+          const metadata = details.map(([name, value]) => safe(name) + ": " + safe(value)).join("<br>");
+          L.circleMarker([lat, lon], {
+            radius: 5, color: "#17374b", weight: 1, fillColor: "#62dfb9", fillOpacity: .9,
+          }).bindTooltip(safe(label))
+            .bindPopup("<strong>" + safe(label) + "</strong><br>" + metadata +
+              "<br>Coordinates: " + lat + ", " + lon + "<br>Source: WiGLE CSV")
+            .addTo(wigle);
+        }
+        $("wigleStatus").textContent = visible > 2000
+          ? "Showing 2,000 WiGLE observations. Zoom in for more detail."
+          : visible + " WiGLE observations in view.";
+      }
+
+      map.on("moveend", drawWiglePins);
+      $("wigleLayer").addEventListener("change", drawWiglePins);
+
+      function renderWigleImport(fit) {
+        if (!wigleObservations.length) return;
+        wigle.clearLayers();
+        const bounds = L.latLngBounds();
+        if ($("wigleMode").value === "pins") {
+          for (const { lat, lon } of wigleObservations) bounds.extend([lat, lon]);
+          if (fit) map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
+          drawWiglePins();
+          return;
+        }
+        const areas = wigleDensity(wigleObservations);
+        for (const { y, x, count } of areas) {
+          const square = L.latLngBounds([y / 100, x / 100], [(y + 1) / 100, (x + 1) / 100]);
+          bounds.extend(square);
+          L.rectangle(square, {
+            color: "#62dfb9",
+            weight: 1,
+            fillOpacity: Math.min(.68, .16 + Math.log2(count) * .095),
+          }).bindTooltip(count + (count === 1 ? " Wi-Fi observation" : " Wi-Fi observations")).addTo(wigle);
+        }
+        $("wigleStatus").textContent = wigleObservations.length + " observations across " + areas.length + " grid areas.";
+        if (fit) map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
+      }
+
+      $("wigleMode").addEventListener("change", () => {
+        if (!$("wigleLayer").checked) $("wigleStatus").textContent = "Turn on WiGLE observations to see the imported file.";
+        renderWigleImport(false);
+      });
+
       $("wigleFile").onchange = async (event) => {
         const input = event.target;
         const file = input.files?.[0];
         if (!file) return;
         try {
-          const areas = parseWigleDensity(await file.text());
+          const observations = parseWigleCSV(await file.text());
           if (input.files?.[0] !== file) return;
-          if (!areas.length) throw Error("No Wi-Fi observations with valid coordinates.");
-          wigle.clearLayers();
-          const bounds = L.latLngBounds();
-          let total = 0;
-          for (const { y, x, count } of areas) {
-            const square = L.latLngBounds([y / 100, x / 100], [(y + 1) / 100, (x + 1) / 100]);
-            bounds.extend(square);
-            total += count;
-            L.rectangle(square, {
-              color: "#62dfb9",
-              weight: 1,
-              fillOpacity: Math.min(.68, .16 + Math.log2(count) * .095),
-            }).bindTooltip(count + (count === 1 ? " Wi-Fi observation" : " Wi-Fi observations")).addTo(wigle);
-          }
+          if (!observations.length) throw Error("No Wi-Fi observations with valid coordinates.");
+          wigleObservations = observations;
           $("wigleLayer").checked = true;
           wigle.addTo(map);
           saveLayerSettings();
           $("clearWigle").disabled = false;
-          $("wigleStatus").textContent = total + " observations across " + areas.length + " grid areas.";
-          map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15 });
+          renderWigleImport(true);
         } catch (error) {
           if (input.files?.[0] !== file) return;
           $("wigleStatus").textContent = "Import error: " + error.message;
         }
       };
       $("clearWigle").onclick = () => {
+        wigleObservations = [];
         wigle.clearLayers();
         $("wigleFile").value = "";
         $("clearWigle").disabled = true;
